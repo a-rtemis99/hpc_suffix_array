@@ -1,0 +1,21 @@
+# File compilati
+bin/
+build/
+*.o
+*.so
+*.a
+*.out
+
+# File dati grandi
+data/output/
+*.bin
+*.large
+
+# Risultati temporanei
+results/benchmarks/*.tmp
+results/profiling/*.nvvp
+
+# Backup e IDE
+.vscode/
+*.swp
+*.bak
