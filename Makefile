@@ -1,125 +1,118 @@
-# Makefile - HPC Suffix Array Project
-
-# Compilatori
+# Compiler and flags
 CC = gcc
-MPICC = mpicc
-NVCC = nvcc
+CFLAGS = -Wall -Wextra -O3 -std=c99
+LDFLAGS = 
 
-# Flag di compilazione
-CFLAGS = -Wall -Wextra -std=c99 -O2
-MPIFLAGS = -Wall -Wextra -O2
-NVCCFLAGS = -arch=sm_75 -O3 -std=c++17
-LDFLAGS = -lm
-
-# Directory
+# Directories
 SRC_DIR = src
 SEQ_DIR = $(SRC_DIR)/sequential
-MPI_DIR = $(SRC_DIR)/mpi
-CUDA_DIR = $(SRC_DIR)/cuda
 COMMON_DIR = $(SRC_DIR)/common
+BENCH_DIR = $(SRC_DIR)/benchmark
 BIN_DIR = bin
-TESTS_DIR = tests
 
-# File sorgenti
-COMMON_SRCS = $(COMMON_DIR)/utils.c
-SEQ_SRCS = $(SEQ_DIR)/manber_myers.c $(SEQ_DIR)/main_sequential.c
+# Source files
+COMMON_SRC = $(COMMON_DIR)/utils.c
+SEQ_SRC = $(SEQ_DIR)/manber_myers.c
+BENCH_SRC = $(BENCH_DIR)/suffix_array_benchmark.c $(BENCH_DIR)/main_benchmark.c
 
-# Target principali
-.PHONY: all sequential mpi cuda clean test
+# Object files
+COMMON_OBJ = $(COMMON_SRC:.c=.o)
+SEQ_OBJ = $(SEQ_SRC:.c=.o)
+BENCH_OBJ = $(BENCH_SRC:.c=.o)
 
-all: sequential mpi
+# Targets
+TARGET_SEQ = $(BIN_DIR)/sequential_suffix_array
+TARGET_BENCH = $(BIN_DIR)/suffix_array_benchmark
 
-sequential: $(BIN_DIR)/suffix_array_seq
+.PHONY: all sequential benchmark charts clean run-benchmark test env-setup
 
-mpi: $(BIN_DIR)/suffix_array_mpi
+all: sequential benchmark
 
-cuda: $(BIN_DIR)/suffix_array_cuda
+sequential: $(TARGET_SEQ)
 
-# Crea directory bin se non esiste
+benchmark: $(TARGET_BENCH)
+
+# Target sequenziale include main_sequential.o
+$(TARGET_SEQ): $(SEQ_OBJ) $(COMMON_OBJ) src/sequential/main_sequential.o | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Target benchmark NON include main_sequential.o
+$(TARGET_BENCH): $(BENCH_OBJ) $(COMMON_OBJ) $(SEQ_OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# === VERSIONE SEQUENZIALE ===
-$(BIN_DIR)/suffix_array_seq: $(COMMON_SRCS) $(SEQ_SRCS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/suffix_array_seq $(COMMON_SRCS) $(SEQ_SRCS) $(LDFLAGS)
-	@echo "✅ Versione sequenziale compilata: $(BIN_DIR)/suffix_array_seq"
+# Regole di compilazione
+$(COMMON_DIR)/%.o: $(COMMON_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# === VERSIONE MPI (placeholder per ora) ===
-$(BIN_DIR)/suffix_array_mpi: | $(BIN_DIR)
-	@echo "📝 MPI target - da implementare"
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/mpi_placeholder $(COMMON_DIR)/utils.c $(LDFLAGS)
-	@echo "⚠️  MPI non ancora implementato - creato placeholder"
+$(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# === VERSIONE CUDA (placeholder per ora) ===
-$(BIN_DIR)/suffix_array_cuda: | $(BIN_DIR)
-	@echo "📝 CUDA target - da implementare"
-	@echo "⚠️  CUDA non ancora implementato"
+$(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# === TEST E UTILITY ===
+# Regola specifica per main_sequential.o
+src/sequential/main_sequential.o: src/sequential/main_sequential.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Test di base
-test_basic: $(BIN_DIR)/suffix_array_seq
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/test_basic $(TESTS_DIR)/test_basic.c $(COMMON_SRCS) $(SEQ_DIR)/manber_myers.c $(LDFLAGS)
-	@echo "✅ Test basic compilato"
+# Setup ambiente Python
+env-setup:
+	sudo apt update
+	sudo apt install -y python3-full python3-venv
+	python3 -m venv hpc_env
+	./hpc_env/bin/pip install pandas matplotlib seaborn numpy
+	@echo "✅ Ambiente Python configurato!"
 
-# Esecuzione test automatici
-test: $(BIN_DIR)/suffix_array_seq
-	@echo "🧪 === TEST SUFFIX ARRAY SEQUENZIALE ==="
+# Genera grafici usando il virtual environment
+charts:
+	./hpc_env/bin/python scripts/generate_charts.py
+
+# Esegui tutto il benchmark (compilazione + esecuzione + grafici)
+run-benchmark: benchmark
+	./$(TARGET_BENCH)
+	./hpc_env/bin/python scripts/generate_charts.py
+
+# Test base della versione sequenziale
+test: sequential
+	@echo "=== TESTING SEQUENTIAL VERSION ==="
+	./$(TARGET_SEQ) "banana"
 	@echo ""
-	@echo "🧪 Test con stringa 'banana':"
-	./$(BIN_DIR)/suffix_array_seq "banana"
+	./$(TARGET_SEQ) "mississippi"
 	@echo ""
-	@echo "🧪 Test con stringa 'mississippi':"
-	./$(BIN_DIR)/suffix_array_seq "mississippi"
-	@echo ""
-	@echo "🧪 Test con stringa 'cabbage':"
-	./$(BIN_DIR)/suffix_array_seq "cabbage"
-	@echo ""
-	@echo "🧪 Test con stringa 'abracadabra':"
-	./$(BIN_DIR)/suffix_array_seq "abracadabra"
+	./$(TARGET_SEQ) "abcabcabc"
 
 # Test di correttezza
-test_correctness: $(BIN_DIR)/suffix_array_seq
-	@echo "🔍 === TEST CORRETTEZZA ==="
-	@echo "Test 1 - banana (atteso: 'ana' LRS=3)"
-	./$(BIN_DIR)/suffix_array_seq "banana" | grep "Sottostringa"
-	@echo ""
-	@echo "Test 2 - mississippi (atteso: 'issi' LRS=4)"
-	./$(BIN_DIR)/suffix_array_seq "mississippi" | grep "Sottostringa"
-	@echo ""
-	@echo "Test 3 - aaaa (atteso: 'aaa' LRS=3)"
-	./$(BIN_DIR)/suffix_array_seq "aaaa" | grep "Sottostringa"
+test-correctness: sequential
+	@echo "=== CORRECTNESS TESTS ==="
+	@echo "Test 1: 'banana' (expected: 'ana')"
+	./$(TARGET_SEQ) "banana" | grep "Longest repeated substring"
+	@echo "Test 2: 'mississippi' (expected: 'issi')" 
+	./$(TARGET_SEQ) "mississippi" | grep "Longest repeated substring"
+	@echo "Test 3: 'abcabcabc' (expected: 'abcabc')"
+	./$(TARGET_SEQ) "abcabcabc" | grep "Longest repeated substring"
 
-# Benchmark prestazioni
-benchmark: $(BIN_DIR)/suffix_array_seq
-	@echo "📊 === BENCHMARK PRESTAZIONI ==="
-	@echo "Test con stringa di 1000 caratteri casuali:"
-	@python3 -c "import random; import string; print(''.join(random.choices(string.ascii_lowercase, k=1000)))" > /tmp/test_1k.txt
-	@time ./$(BIN_DIR)/suffix_array_seq "$$(cat /tmp/test_1k.txt)" > /dev/null
-	@echo ""
-	@echo "Test con stringa di 5000 caratteri casuali:"
-	@python3 -c "import random; import string; print(''.join(random.choices(string.ascii_lowercase, k=5000)))" > /tmp/test_5k.txt
-	@time ./$(BIN_DIR)/suffix_array_seq "$$(cat /tmp/test_5k.txt)" > /dev/null
-
-# Pulizia
+# Pulizia completa
 clean:
-	rm -rf $(BIN_DIR)
-	@echo "✅ Pulizia completata"
+	rm -f $(COMMON_OBJ) $(SEQ_OBJ) $(BENCH_OBJ) src/sequential/main_sequential.o $(TARGET_SEQ) $(TARGET_BENCH)
+	rm -rf results/csv/*.csv results/charts/*.png
+
+# Pulizia estrema (include virtual environment)
+distclean: clean
+	rm -rf hpc_env bin
 
 # Help
 help:
-	@echo "=== HPC SUFFIX ARRAY PROJECT ==="
-	@echo "Target disponibili:"
-	@echo "  all          - Compila sequential e MPI"
-	@echo "  sequential   - Compila solo versione sequenziale"
-	@echo "  mpi          - Compila versione MPI (placeholder)"
-	@echo "  cuda         - Compila versione CUDA (placeholder)"
-	@echo "  test         - Esegui test automatici"
-	@echo "  test_correctness - Test di correttezza"
-	@echo "  benchmark    - Test prestazioni"
-	@echo "  clean        - Pulizia file compilati"
-	@echo ""
-	@echo "Esempi:"
-	@echo "  make sequential && ./bin/suffix_array_seq \"banana\""
-	@echo "  make test"
-	@echo "  make benchmark"
+	@echo "=== HPC SUFFIX ARRAY MAKEFILE TARGETS ==="
+	@echo "make all              - Compila tutto (sequential + benchmark)"
+	@echo "make sequential       - Compila solo la versione sequenziale"
+	@echo "make benchmark        - Compila solo il benchmark"
+	@echo "make run-benchmark    - Esegue benchmark completo + grafici"
+	@echo "make test             - Test di base con stringhe note"
+	@echo "make test-correctness - Test di correttezza dettagliato"
+	@echo "make charts           - Genera solo i grafici (dopo benchmark)"
+	@echo "make env-setup        - Configura ambiente Python"
+	@echo "make clean            - Pulizia file oggetto e eseguibili"
+	@echo "make distclean        - Pulizia completa (include virtual env)"
+	@echo "make help             - Mostra questo help"

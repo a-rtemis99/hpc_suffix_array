@@ -1,24 +1,30 @@
+// src/common/suffix_array.h
 #ifndef SUFFIX_ARRAY_H
 #define SUFFIX_ARRAY_H
 
-#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
-// Struttura per Suffix Array basata sull'implementazione di riferimento
 typedef struct {
-    int* sa;           // Suffix Array
-    int* rank;         // Array dei rank
-    int* lcp;          // LCP Array
-    size_t n;          // Lunghezza stringa
+    int index;
+    int rank[2];
+} Suffix;
+
+typedef struct {
+    int* sa;       // Suffix Array
+    int* lcp;      // Longest Common Prefix array
+    int n;         // Length of the input string
+    char* str;     // Original string
 } SuffixArray;
 
-// Funzioni dell'implementazione di riferimento
-void build_suffix_array(const char* text, int n, int* sa);
-void build_lcp_array(const char* text, int n, const int* sa, int* lcp);
-int find_longest_repeated_substring(const char* text, int n, char* result);
-
-// Funzioni di utilità
-int is_valid_suffix_array(const char* text, int n, const int* sa);
-void free_suffix_array(SuffixArray* sa);
-void print_suffix_array(const char* text, int n, const int* sa);
+// Function declarations - QUESTE SONO LE FUNZIONI IMPLEMENTATE IN manber_myers.c
+SuffixArray* create_suffix_array(const char* S, int n);
+void destroy_suffix_array(SuffixArray* sa);
+void build_suffix_array(SuffixArray* sa);
+void build_lcp_array(SuffixArray* sa);
+char* find_longest_repeated_substring(SuffixArray* sa);
+int is_valid_suffix_array(SuffixArray* sa);
 
 #endif

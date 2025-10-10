@@ -1,58 +1,107 @@
+// src/sequential/main_sequential.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <sys/time.h>
 #include "../common/suffix_array.h"
+
+double get_time() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec * 1e-6;
+}
+
+void print_suffix_array(SuffixArray* sa) {
+    printf("Suffix Array: [");
+    for (int i = 0; i < sa->n && i < 20; i++) {
+        printf("%d", sa->sa[i]);
+        if (i < sa->n - 1 && i < 19) printf(", ");
+    }
+    if (sa->n > 20) printf(", ...");
+    printf("]\n");
+}
+
+void print_first_suffixes(SuffixArray* sa, int count) {
+    printf("First %d suffixes:\n", count);
+    for (int i = 0; i < count && i < sa->n; i++) {
+        printf("SA[%d] = %d -> \"", i, sa->sa[i]);
+        // Stampa solo i primi 30 caratteri del suffisso
+        for (int j = sa->sa[i]; j < sa->n && j < sa->sa[i] + 30; j++) {
+            printf("%c", sa->str[j]);
+        }
+        if (sa->n - sa->sa[i] > 30) printf("...");
+        printf("\"\n");
+    }
+}
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        printf("Usage: %s <string>\n", argv[0]);
-        printf("Example: %s \"banana\"\n", argv[0]);
+        printf("Usage: %s <input_string>\n", argv[0]);
         return 1;
     }
     
     const char* text = argv[1];
     int n = strlen(text);
     
-    printf("🔍 Analisi stringa: \"%s\" (lunghezza: %d)\n", text, n);
-    printf("📚 Implementazione basata su: https://gist.github.com/sumanth232/e1600b327922b6947f51\n\n");
+    printf("Input string: %s\n", text);
+    printf("String length: %d\n", n);
     
-    clock_t start = clock();
+    double start_time = get_time();
     
-    // Trova direttamente la LRS usando l'implementazione di riferimento
-    char lrs[256];
-    int lrs_length = find_longest_repeated_substring(text, n, lrs);
+    // Crea il suffix array
+    SuffixArray* sa = create_suffix_array(text, n);
+    if (!sa) {
+        printf("Error: Failed to create suffix array\n");
+        return 1;
+    }
     
-    clock_t end = clock();
-    double time_spent = ((double)(end - start)) / CLOCKS_PER_SEC;
+    // Costruisci il suffix array
+    build_suffix_array(sa);
+    double mid_time = get_time();
     
-    printf("✅ Elaborazione completata in %.6f secondi\n", time_spent);
+    // Costruisci LCP array
+    build_lcp_array(sa);
     
-    // Verifica aggiuntiva con suffix array esplicito
-    int* sa = (int*)malloc(n * sizeof(int));
-    int* lcp = (int*)malloc(n * sizeof(int));
+    // Trova la sottostringa ripetuta più lunga
+    char* lrs = find_longest_repeated_substring(sa);
     
-    build_suffix_array(text, n, sa);
-    build_lcp_array(text, n, sa, lcp);
+    double end_time = get_time();
     
-    if (is_valid_suffix_array(text, n, sa)) {
-        printf("✅ Suffix Array valido\n");
+    // Validazione
+    int valid = is_valid_suffix_array(sa);
+    
+    printf("\n=== RESULTS ===\n");
+    printf("Valid suffix array: %s\n", valid ? "YES" : "NO");
+    
+    if (lrs) {
+        printf("Longest repeated substring: '%s' (length: %zu)\n", 
+               lrs, strlen(lrs));
     } else {
-        printf("❌ Suffix Array non valido!\n");
+        printf("No repeated substring found\n");
     }
     
-    printf("📊 Risultati:\n");
-    printf("   - Lunghezza LRS: %d\n", lrs_length);
-    printf("   - Sottostringa ripetuta più lunga: \"%s\"\n", 
-           lrs_length > 0 ? lrs : "(nessuna)");
+    printf("Suffix array construction time: %.6f seconds\n", mid_time - start_time);
+    printf("LCP construction + LRS search time: %.6f seconds\n", end_time - mid_time);
+    printf("Total execution time: %.6f seconds\n", end_time - start_time);
     
-    // Stampa il suffix array (solo per stringhe piccole)
-    if (n <= 50) {
-        printf("\n");
-        print_suffix_array(text, n, sa);
+    // Stampa informazioni dettagliate per stringhe piccole
+    if (n <= 100) {
+        printf("\n=== DETAILED ANALYSIS ===\n");
+        print_suffix_array(sa);
+        print_first_suffixes(sa, 10);
+        
+        printf("\nLCP Array: [");
+        for (int i = 0; i < sa->n && i < 20; i++) {
+            printf("%d", sa->lcp[i]);
+            if (i < sa->n - 1 && i < 19) printf(", ");
+        }
+        if (sa->n > 20) printf(", ...");
+        printf("]\n");
     }
     
-    free(sa);
-    free(lcp);
+    // Cleanup
+    free(lrs);
+    destroy_suffix_array(sa);
+    
     return 0;
 }
