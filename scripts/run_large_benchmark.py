@@ -86,7 +86,8 @@ def main():
         "test_data/large/random_1MB.txt",
         "test_data/large/random_50MB.txt",
         "test_data/large/random_100MB.txt",
-        # Aggiungi altri file man mano che vuoi testarli
+        "test_data/large/random_200MB.txt",
+        "test_data/large/random_500MB.txt",
     ]
     
     # Filtra solo i file che esistono

@@ -213,6 +213,8 @@ def generate_detailed_report(csv_file, output_dir):
         'Tempo per 1MB': f"{analysis_df[analysis_df['file_size_mb'] == 1.0]['execution_time_seconds'].values[0]:.2f} s",
         'Tempo per 50MB': f"{analysis_df[analysis_df['file_size_mb'] == 50.0]['execution_time_seconds'].values[0]:.2f} s",
         'Tempo per 100MB': f"{analysis_df[analysis_df['file_size_mb'] == 100.0]['execution_time_seconds'].values[0]:.2f} s",
+        'Tempo per 200MB': f"{analysis_df[analysis_df['file_size_mb'] == 200.0]['execution_time_seconds'].values[0]:.2f} s",
+        'Tempo per 500MB': f"{analysis_df[analysis_df['file_size_mb'] == 500.0]['execution_time_seconds'].values[0]:.2f} s",
     }
     
     # Calcola fattore di crescita complessivo
@@ -239,7 +241,7 @@ def generate_detailed_report(csv_file, output_dir):
         
         f.write("PRESTAZIONI TEMPORALI\n")
         f.write("-" * 40 + "\n")
-        for key in ['Tempo per 1MB', 'Tempo per 50MB', 'Tempo per 100MB']:
+        for key in ['Tempo per 1MB', 'Tempo per 50MB', 'Tempo per 100MB', 'Tempo per 200MB', 'Tempo per 500MB']:
             f.write(f"• {key}: {stats[key]}\n")
         f.write(f"• Range temporale: {stats['Tempo min']} - {stats['Tempo max']}\n\n")
         
@@ -263,13 +265,6 @@ def generate_detailed_report(csv_file, output_dir):
             f.write("BUONA scalabilità quasi-lineare\n")
         else:
             f.write("SCALABILITÀ con complessità super-lineare\n")
-        
-        f.write("\nRACCOMANDAZIONI PER PARALLELIZZAZIONE\n")
-        f.write("-" * 45 + "\n")
-        f.write("1. MPI: Partizionamento dati per grandi dimensioni\n")
-        f.write("2. CUDA: Parallelizzazione fasi di ordinamento\n")
-        f.write("3. Ottimizzazione: Riduzione allocazioni memoria\n")
-        f.write("4. Target: Speedup 5-10x atteso con parallelizzazione\n")
 
 def main():
     """Funzione principale"""
