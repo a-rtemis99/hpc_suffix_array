@@ -32,6 +32,35 @@ sequential: $(TARGET_SEQ)
 
 benchmark: $(TARGET_BENCH)
 
+benchmark-large:
+	@echo "Running large-scale benchmark..."
+	@python3 scripts/run_large_benchmark.py
+
+
+memory-test:
+	@echo "Running memory usage tests..."
+	@python3 scripts/monitor_memory.py
+
+performance-charts:
+	@echo "Generating performance charts..."
+	@./hpc_env/bin/python scripts/generate_performance_charts.py
+
+full-benchmark: benchmark-large performance-charts
+	@echo "Full benchmark completed!"
+	@echo "Charts generated in results/charts/"
+
+test-large: sequential
+	@echo "Testing on large datasets..."
+	@echo "1MB test:"
+	@./$(TARGET_SEQ) test_data/large/random_1MB.txt | grep -E "(Longest repeated substring|Time|Length)"
+	@echo ""
+	@echo "50MB test:" 
+	@timeout 300 ./$(TARGET_SEQ) test_data/large/random_50MB.txt | grep -E "(Longest repeated substring|Time|Length)" || echo "Timeout or error"
+
+generate-data:
+	@echo "Generating test datasets..."
+	@python3 scripts/generate_large_datasets.py
+
 # Target sequenziale include main_sequential.o
 $(TARGET_SEQ): $(SEQ_OBJ) $(COMMON_OBJ) src/sequential/main_sequential.o | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

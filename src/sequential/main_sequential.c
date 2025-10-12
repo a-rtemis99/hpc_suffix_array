@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include "../common/suffix_array.h"
+#include "../common/utils.h"
 
 double get_time() {
     struct timeval tv;
@@ -34,24 +35,73 @@ void print_first_suffixes(SuffixArray* sa, int count) {
     }
 }
 
+// AGGIUNGI QUESTA FUNZIONE - OUTPUT STRUTTURATO PER BENCHMARK
+void print_structured_results(const char* implementation, const char* filename, 
+                             long file_size, double total_time, double sa_time, 
+                             double lcp_time, int num_processes) {
+    printf("\n===STRUCTURED_RESULTS===\n");
+    printf("IMPLEMENTATION:%s\n", implementation);
+    printf("FILENAME:%s\n", filename);
+    printf("FILE_SIZE:%ld\n", file_size);
+    printf("TOTAL_TIME:%.6f\n", total_time);
+    printf("SA_TIME:%.6f\n", sa_time);
+    printf("LCP_TIME:%.6f\n", lcp_time);
+    printf("PROCESSES:%d\n", num_processes);
+    printf("===END_RESULTS===\n\n");
+}
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        printf("Usage: %s <input_string>\n", argv[0]);
+        printf("Usage: %s <input_file_or_string>\n", argv[0]);
+        printf("If argument contains '/' or '.', it's treated as a file\n");
+        printf("Otherwise, it's treated as a direct string\n");
         return 1;
     }
     
-    const char* text = argv[1];
-    int n = strlen(text);
+    char* input_str;
+    long n;
+    const char* filename = argv[1];
     
-    printf("Input string: %s\n", text);
-    printf("String length: %d\n", n);
+    // Determina se l'argomento è un file o una stringa diretta
+    if (strchr(argv[1], '/') != NULL || strchr(argv[1], '.') != NULL) {
+        // È un file
+        printf("Reading from file: %s\n", argv[1]);
+        
+        // Leggi il file di input
+        input_str = read_file(argv[1], &n);
+        if (!input_str) {
+            fprintf(stderr, "Error: Failed to read input file\n");
+            return 1;
+        }
+        
+        // DEBUG: Stampa informazioni sul file letto
+        printf("File read successfully: %s\n", argv[1]);
+        printf("Actual string length: %ld\n", n);
+        if (n < 100) {
+            printf("Full content: \"%s\"\n", input_str);
+        } else {
+            print_first_chars(input_str, 50);
+            print_last_chars(input_str, n, 50);
+        }
+        printf("\n");
+        
+    } else {
+        // È una stringa diretta
+        input_str = strdup(argv[1]);
+        n = strlen(input_str);
+        filename = "direct_string";
+        
+        printf("Input string: %s\n", input_str);
+        printf("String length: %ld\n", n);
+    }
     
     double start_time = get_time();
     
     // Crea il suffix array
-    SuffixArray* sa = create_suffix_array(text, n);
+    SuffixArray* sa = create_suffix_array(input_str, n);
     if (!sa) {
         printf("Error: Failed to create suffix array\n");
+        free(input_str);
         return 1;
     }
     
@@ -88,7 +138,7 @@ int main(int argc, char* argv[]) {
     if (n <= 100) {
         printf("\n=== DETAILED ANALYSIS ===\n");
         print_suffix_array(sa);
-        print_first_suffixes(sa, 10);
+        print_first_suffixes(sa, (n < 10) ? n : 10);
         
         printf("\nLCP Array: [");
         for (int i = 0; i < sa->n && i < 20; i++) {
@@ -99,9 +149,16 @@ int main(int argc, char* argv[]) {
         printf("]\n");
     }
     
+    // AGGIUNGI: OUTPUT STRUTTURATO PER BENCHMARK UNIFICATO
+    print_structured_results("sequential", filename, n, 
+                           end_time - start_time, 
+                           mid_time - start_time,
+                           end_time - mid_time, 1);
+    
     // Cleanup
     free(lrs);
     destroy_suffix_array(sa);
+    free(input_str);
     
     return 0;
 }

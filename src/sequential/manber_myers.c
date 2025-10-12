@@ -51,99 +51,104 @@ void destroy_suffix_array(SuffixArray* sa) {
 void build_suffix_array(SuffixArray* sa) {
     int n = sa->n;
     Suffix* suffixes = (Suffix*)malloc(n * sizeof(Suffix));
-    int* rank = (int*)malloc(n * sizeof(int));
+    int* indices = (int*)malloc(n * sizeof(int));
     
-    // Initialize suffixes with first character ranks
+    if (!suffixes || !indices) {
+        free(suffixes);
+        free(indices);
+        return;
+    }
+
+    // Initialize with first character
     for (int i = 0; i < n; i++) {
         suffixes[i].index = i;
         suffixes[i].rank[0] = sa->str[i];
-        suffixes[i].rank[1] = ((i + 1) < n) ? sa->str[i + 1] : -1;
+        suffixes[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
     }
-    
-    // Sort suffixes by first 2 characters
+
+    // Sort by first 2 characters
     qsort(suffixes, n, sizeof(Suffix), compare_suffix);
-    
-    // Main doubling phases
-    for (int k = 4; k < 2 * n; k = k * 2) {
-        // Assign new ranks to first suffix
-        int new_rank = 0;
-        rank[suffixes[0].index] = 0;
+
+    // Main doubling loop
+    for (int k = 4; k < 2 * n; k *= 2) {
+        // Assign new ranks
+        int rank = 0;
+        int prev0 = suffixes[0].rank[0];
+        int prev1 = suffixes[0].rank[1];
         
-        // Assign ranks to remaining suffixes
-        int prev_rank0 = suffixes[0].rank[0];
-        int prev_rank1 = suffixes[0].rank[1];
-        
+        suffixes[0].rank[0] = rank;
+        indices[suffixes[0].index] = 0;
+
         for (int i = 1; i < n; i++) {
-            if (suffixes[i].rank[0] == prev_rank0 && 
-                suffixes[i].rank[1] == prev_rank1) {
-                suffixes[i].rank[0] = new_rank;
+            if (suffixes[i].rank[0] == prev0 && suffixes[i].rank[1] == prev1) {
+                suffixes[i].rank[0] = rank;
             } else {
-                new_rank++;
-                prev_rank0 = suffixes[i].rank[0];
-                prev_rank1 = suffixes[i].rank[1];
-                suffixes[i].rank[0] = new_rank;
+                rank++;
+                prev0 = suffixes[i].rank[0];
+                prev1 = suffixes[i].rank[1];
+                suffixes[i].rank[0] = rank;
             }
-            rank[suffixes[i].index] = i;
+            indices[suffixes[i].index] = i;
         }
-        
+
         // Assign next ranks
         for (int i = 0; i < n; i++) {
             int next_index = suffixes[i].index + k / 2;
-            suffixes[i].rank[1] = (next_index < n) ? rank[next_index] : -1;
+            suffixes[i].rank[1] = (next_index < n) ? suffixes[indices[next_index]].rank[0] : -1;
         }
-        
-        // Sort suffixes again
+
+        // Sort again
         qsort(suffixes, n, sizeof(Suffix), compare_suffix);
     }
-    
-    // Store the result in suffix array
+
+    // Store final result
     for (int i = 0; i < n; i++) {
         sa->sa[i] = suffixes[i].index;
     }
-    
+
     free(suffixes);
-    free(rank);
+    free(indices);
 }
 
 void build_lcp_array(SuffixArray* sa) {
     int n = sa->n;
     int* rank = (int*)malloc(n * sizeof(int));
     
-    // Build inverse suffix array (rank)
+    if (!rank) return;
+
+    // Build inverse mapping
     for (int i = 0; i < n; i++) {
         rank[sa->sa[i]] = i;
     }
-    
-    int h = 0; // Current LCP length
+
+    int h = 0;
     sa->lcp[0] = 0;
-    
+
     for (int i = 0; i < n; i++) {
         if (rank[i] > 0) {
             int j = sa->sa[rank[i] - 1];
             
-            // Compute LCP between current suffix and previous one
-            while (i + h < n && j + h < n && 
-                   sa->str[i + h] == sa->str[j + h]) {
+            while (i + h < n && j + h < n && sa->str[i + h] == sa->str[j + h]) {
                 h++;
             }
             
             sa->lcp[rank[i]] = h;
-            
             if (h > 0) h--;
         }
     }
-    
+
     free(rank);
 }
 
 char* find_longest_repeated_substring(SuffixArray* sa) {
-    build_suffix_array(sa);
-    build_lcp_array(sa);
+    if (sa->sa[0] == 0 && sa->lcp[0] == 0) {
+        build_suffix_array(sa);
+        build_lcp_array(sa);
+    }
     
     int max_lcp = 0;
     int max_index = 0;
     
-    // Find maximum LCP value
     for (int i = 1; i < sa->n; i++) {
         if (sa->lcp[i] > max_lcp) {
             max_lcp = sa->lcp[i];
@@ -152,10 +157,9 @@ char* find_longest_repeated_substring(SuffixArray* sa) {
     }
     
     if (max_lcp == 0) {
-        return NULL; // No repeated substring found
+        return NULL;
     }
     
-    // Extract the longest repeated substring
     char* result = (char*)malloc((max_lcp + 1) * sizeof(char));
     if (!result) return NULL;
     
@@ -166,8 +170,9 @@ char* find_longest_repeated_substring(SuffixArray* sa) {
 }
 
 int is_valid_suffix_array(SuffixArray* sa) {
-    // Check that all indices are unique and within bounds
+    // Check bounds and uniqueness
     int* seen = (int*)calloc(sa->n, sizeof(int));
+    if (!seen) return 0;
     
     for (int i = 0; i < sa->n; i++) {
         if (sa->sa[i] < 0 || sa->sa[i] >= sa->n) {
@@ -183,10 +188,10 @@ int is_valid_suffix_array(SuffixArray* sa) {
     
     // Check lexicographic order
     for (int i = 1; i < sa->n; i++) {
-        char* suffix1 = sa->str + sa->sa[i - 1];
-        char* suffix2 = sa->str + sa->sa[i];
+        const char* s1 = sa->str + sa->sa[i-1];
+        const char* s2 = sa->str + sa->sa[i];
         
-        if (strcmp(suffix1, suffix2) > 0) {
+        if (strcmp(s1, s2) > 0) {
             free(seen);
             return 0;
         }

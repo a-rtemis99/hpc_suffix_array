@@ -1,14 +1,14 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// Funzione per leggere un file in memoria
+// Funzione per leggere un file
 char* read_file(const char* filename, long* file_size);
 
 // Funzione per scrivere un file
-void write_file(const char* filename, const char* data, long data_size);
+int write_file(const char* filename, const char* content);
+
+// Funzioni di utilità per stampare stringhe
+void print_first_chars(const char* str, int n);
+void print_last_chars(const char* str, long length, int n);
 
 #endif
