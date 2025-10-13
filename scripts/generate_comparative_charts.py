@@ -1,6 +1,7 @@
-#!/usr/bin/env /mnt/c/Users/Artemis/Desktop/hpc_suffix_array/hpc_env/bin/python3
+#!/usr/bin/env python3
 """
-Genera grafici comparativi tra Sequential vs MPI vs CUDA
+Genera grafici comparativi per tutti i backend (Sequential, MPI, CUDA)
+Versione aggiornata per analisi multi-backend
 """
 import pandas as pd
 import matplotlib
@@ -14,256 +15,198 @@ from datetime import datetime
 # Configurazione styling
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_palette("husl")
+plt.rcParams['figure.figsize'] = (12, 8)
+plt.rcParams['font.size'] = 12
 
-def create_comparative_analysis(csv_file, output_dir):
-    """Analisi comparativa tra implementazioni"""
+def load_combined_results():
+    """Carica e combina tutti i risultati dei benchmark"""
+    results_files = [
+        "results/benchmarks/sequential_results.csv",
+        "results/benchmarks/mpi_results.csv", 
+        "results/benchmarks/cuda_results.csv"
+    ]
     
-    df = pd.read_csv(csv_file)
+    all_data = []
+    for file in results_files:
+        if os.path.exists(file):
+            df = pd.read_csv(file)
+            # Filtra solo test riusciti
+            df = df[df['success'] == True] if 'success' in df.columns else df
+            all_data.append(df)
     
-    # Separa per implementazione
-    sequential_df = df[df['implementation'] == 'sequential']
-    mpi_df = df[df['implementation'] == 'mpi']
-    cuda_df = df[df['implementation'] == 'cuda'] if 'cuda' in df['implementation'].values else None
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
+    else:
+        print("Nessun dato di benchmark trovato!")
+        return None
+
+def create_comparative_analysis(output_dir):
+    """Crea analisi comparativa multi-backend"""
+    df = load_combined_results()
+    if df is None or len(df) == 0:
+        print("Nessun dato valido per l'analisi")
+        return
     
-    print("Generating comparative analysis charts...")
+    print("Creando analisi comparativa multi-backend...")
     
-    # 1. GRAFICO: Confronto tempi di esecuzione
-    plt.figure(figsize=(12, 8))
+    # 1. GRAFICO: Confronto prestazioni assolute
+    plt.figure(figsize=(14, 10))
     
-    # Subplot 1: Tempi assoluti
+    # Subplot 1: Tempi di esecuzione comparati
     plt.subplot(2, 2, 1)
     
-    if not sequential_df.empty:
-        plt.plot(sequential_df['file_size_mb'], sequential_df['total_time_seconds'], 
-                 'bo-', linewidth=3, markersize=8, label='Sequential', alpha=0.8)
+    backends = df['backend'].unique() if 'backend' in df.columns else ['sequential']
+    colors = plt.cm.Set3(np.linspace(0, 1, len(backends)))
     
-    if not mpi_df.empty:
-        # Prendi solo i test con più processi per chiarezza
-        mpi_4procs = mpi_df[mpi_df['num_processes'] == 4]
-        if not mpi_4procs.empty:
-            plt.plot(mpi_4procs['file_size_mb'], mpi_4procs['total_time_seconds'], 
-                     'ro-', linewidth=3, markersize=8, label='MPI (4 processes)', alpha=0.8)
-    
-    if cuda_df is not None and not cuda_df.empty:
-        plt.plot(cuda_df['file_size_mb'], cuda_df['total_time_seconds'], 
-                 'go-', linewidth=3, markersize=8, label='CUDA', alpha=0.8)
+    for i, backend in enumerate(backends):
+        backend_data = df[df['backend'] == backend]
+        if len(backend_data) > 0:
+            plt.plot(backend_data['size_mb'], backend_data['time_seconds'], 
+                    'o-', linewidth=3, markersize=8, label=backend, color=colors[i])
     
     plt.xscale('log')
     plt.yscale('log')
-    plt.xlabel('Dimensione File (MB)')
-    plt.ylabel('Tempo di Esecuzione (secondi)')
-    plt.title('Confronto Prestazioni: Sequential vs MPI vs CUDA')
+    plt.xlabel('Dimensione File (MB) - Scala Logaritmica')
+    plt.ylabel('Tempo di Esecuzione (secondi) - Scala Logaritmica')
+    plt.title('CONFRONTO PRESTAZIONI: Sequential vs MPI vs CUDA')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Subplot 2: Speedup MPI
+    # Subplot 2: Throughput comparato
     plt.subplot(2, 2, 2)
     
-    if not sequential_df.empty and not mpi_df.empty:
-        # Calcola speedup per ogni configurazione MPI
-        speedup_data = []
-        for num_procs in mpi_df['num_processes'].unique():
-            mpi_proc_df = mpi_df[mpi_df['num_processes'] == num_procs]
-            
-            for size in mpi_proc_df['file_size_mb'].unique():
-                mpi_time = mpi_proc_df[mpi_proc_df['file_size_mb'] == size]['total_time_seconds'].values
-                seq_time = sequential_df[sequential_df['file_size_mb'] == size]['total_time_seconds'].values
-                
-                if len(mpi_time) > 0 and len(seq_time) > 0:
-                    speedup = seq_time[0] / mpi_time[0]
-                    speedup_data.append({
-                        'processes': num_procs,
-                        'size_mb': size,
-                        'speedup': speedup
-                    })
-        
-        if speedup_data:
-            speedup_df = pd.DataFrame(speedup_data)
-            
-            for num_procs in speedup_df['processes'].unique():
-                proc_data = speedup_df[speedup_df['processes'] == num_procs]
-                plt.plot(proc_data['size_mb'], proc_data['speedup'], 
-                         'o-', linewidth=2, markersize=6, 
-                         label=f'MPI ({int(num_procs)} processes)')
-            
-            plt.axhline(y=1, color='black', linestyle='--', alpha=0.5, label='Baseline Sequential')
-            plt.xscale('log')
-            plt.xlabel('Dimensione File (MB)')
-            plt.ylabel('Speedup')
-            plt.title('Speedup MPI vs Sequential')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-    
-    # Subplot 3: Throughput comparativo
-    plt.subplot(2, 2, 3)
-    
-    implementations = []
-    if not sequential_df.empty:
-        implementations.append(('Sequential', sequential_df, 'blue'))
-    if not mpi_df.empty:
-        implementations.append(('MPI (4 procs)', mpi_df[mpi_df['num_processes'] == 4], 'red'))
-    if cuda_df is not None and not cuda_df.empty:
-        implementations.append(('CUDA', cuda_df, 'green'))
-    
-    for label, data, color in implementations:
-        if not data.empty:
-            plt.plot(data['file_size_mb'], data['throughput_chars_per_second'], 
-                     'o-', color=color, linewidth=2, markersize=6, label=label)
+    for i, backend in enumerate(backends):
+        backend_data = df[df['backend'] == backend]
+        if len(backend_data) > 0 and 'throughput_mb_s' in backend_data.columns:
+            plt.plot(backend_data['size_mb'], backend_data['throughput_mb_s'], 
+                    's-', linewidth=2, markersize=6, label=backend, color=colors[i])
     
     plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel('Dimensione File (MB)')
-    plt.ylabel('Throughput (caratteri/secondo)')
-    plt.title('Throughput Comparativo')
+    plt.xlabel('Dimensione File (MB) - Scala Logaritmica')
+    plt.ylabel('Throughput (MB/s)')
+    plt.title('CONFRONTO THROUGHPUT')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Subplot 4: Efficienza parallela MPI
+    # Subplot 3: Speedup rispetto al sequenziale
+    plt.subplot(2, 2, 3)
+    
+    if 'sequential' in backends and len(backends) > 1:
+        sequential_times = df[df['backend'] == 'sequential'].set_index('file')['time_seconds']
+        
+        for backend in backends:
+            if backend != 'sequential':
+                backend_data = df[df['backend'] == backend].set_index('file')
+                common_files = sequential_times.index.intersection(backend_data.index)
+                if len(common_files) > 0:
+                    speedup = sequential_times[common_files] / backend_data.loc[common_files]['time_seconds']
+                    plt.plot(backend_data.loc[common_files]['size_mb'], speedup, 
+                            '^-', linewidth=2, markersize=6, label=f'{backend} speedup')
+        
+        plt.axhline(y=1, color='red', linestyle='--', alpha=0.7, label='Baseline (sequential)')
+        plt.xlabel('Dimensione File (MB)')
+        plt.ylabel('Speedup (vs Sequential)')
+        plt.title('ANALISI SPEEDUP MPI/CUDA')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+    else:
+        plt.text(0.5, 0.5, 'Dati insufficienti\nper analisi speedup', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title('ANALISI SPEEDUP (dati insufficienti)')
+    
+    # Subplot 4: Efficienza parallela
     plt.subplot(2, 2, 4)
     
-    if not sequential_df.empty and not mpi_df.empty:
-        efficiency_data = []
-        for num_procs in mpi_df['num_processes'].unique():
-            mpi_proc_df = mpi_df[mpi_df['num_processes'] == num_procs]
-            
-            for size in mpi_proc_df['file_size_mb'].unique():
-                mpi_time = mpi_proc_df[mpi_proc_df['file_size_mb'] == size]['total_time_seconds'].values
-                seq_time = sequential_df[sequential_df['file_size_mb'] == size]['total_time_seconds'].values
-                
-                if len(mpi_time) > 0 and len(seq_time) > 0:
-                    speedup = seq_time[0] / mpi_time[0]
-                    efficiency = speedup / num_procs
-                    efficiency_data.append({
-                        'processes': num_procs,
-                        'size_mb': size,
-                        'efficiency': efficiency
-                    })
+    if 'mpi_2' in backends and 'mpi_4' in backends:
+        # Calcola efficienza MPI
+        mpi_2_data = df[df['backend'] == 'mpi_2'].set_index('file')
+        mpi_4_data = df[df['backend'] == 'mpi_4'].set_index('file')
+        common_files = mpi_2_data.index.intersection(mpi_4_data.index)
         
-        if efficiency_data:
-            efficiency_df = pd.DataFrame(efficiency_data)
-            
-            for num_procs in efficiency_df['processes'].unique():
-                proc_data = efficiency_df[efficiency_df['processes'] == num_procs]
-                plt.plot(proc_data['size_mb'], proc_data['efficiency'], 
-                         's-', linewidth=2, markersize=6, 
-                         label=f'{int(num_procs)} processes')
-            
-            plt.axhline(y=1.0, color='green', linestyle='--', alpha=0.7, label='Efficienza Ideale (100%)')
-            plt.axhline(y=0.5, color='orange', linestyle='--', alpha=0.7, label='Soglia 50%')
-            plt.xscale('log')
+        if len(common_files) > 0:
+            efficiency = (mpi_2_data.loc[common_files]['time_seconds'] / 
+                         mpi_4_data.loc[common_files]['time_seconds']) / 2 * 100
+            plt.plot(mpi_4_data.loc[common_files]['size_mb'], efficiency, 
+                    'D-', linewidth=2, markersize=6, label='Efficienza MPI', color='purple')
+            plt.axhline(y=100, color='red', linestyle='--', alpha=0.5, label='Efficienza ideale')
             plt.xlabel('Dimensione File (MB)')
-            plt.ylabel('Efficienza Parallela')
-            plt.title('Efficienza Parallela MPI')
+            plt.ylabel('Efficienza Parallela (%)')
+            plt.title('EFFICIENZA PARALLELA MPI')
             plt.legend()
             plt.grid(True, alpha=0.3)
+        else:
+            plt.text(0.5, 0.5, 'Dati MPI insufficienti\nper analisi efficienza', 
+                    ha='center', va='center', transform=plt.gca().transAxes)
+            plt.title('EFFICIENZA PARALLELA (dati insufficienti)')
+    else:
+        plt.text(0.5, 0.5, 'Dati MPI insufficienti\nper analisi efficienza', 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.title('EFFICIENZA PARALLELA (dati insufficienti)')
     
     plt.tight_layout()
     plt.savefig(f'{output_dir}/comparative_analysis.png', dpi=300, bbox_inches='tight')
     plt.close()
+    
+    print("Grafico comparativo generato: comparative_analysis.png")
 
-def create_scaling_analysis(csv_file, output_dir):
-    """Analisi strong/weak scaling MPI"""
-    
-    df = pd.read_csv(csv_file)
-    mpi_df = df[df['implementation'] == 'mpi']
-    
-    if mpi_df.empty:
-        print("No MPI data for scaling analysis")
+def generate_multi_backend_report(output_dir):
+    """Genera report dettagliato multi-backend"""
+    df = load_combined_results()
+    if df is None:
         return
     
-    plt.figure(figsize=(12, 5))
-    
-    # Strong scaling (problema fisso)
-    plt.subplot(1, 2, 1)
-    
-    strong_scaling_data = []
-    fixed_size = mpi_df['file_size_mb'].max()  # Prendi la dimensione più grande
-    
-    for num_procs in sorted(mpi_df['num_processes'].unique()):
-        proc_data = mpi_df[(mpi_df['num_processes'] == num_procs) & 
-                          (mpi_df['file_size_mb'] == fixed_size)]
+    with open(f'{output_dir}/multi_backend_report.txt', 'w') as f:
+        f.write("HPC SUFFIX ARRAY - RAPPORTO MULTI-BACKEND\n")
+        f.write("=" * 70 + "\n")
+        f.write(f"Generato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
-        if not proc_data.empty:
-            time = proc_data['total_time_seconds'].values[0]
-            strong_scaling_data.append({
-                'processes': num_procs,
-                'time': time
-            })
-    
-    if len(strong_scaling_data) > 1:
-        strong_df = pd.DataFrame(strong_scaling_data)
-        base_time = strong_df[strong_df['processes'] == 1]['time'].values[0]
-        strong_df['speedup'] = base_time / strong_df['time']
-        strong_df['efficiency'] = strong_df['speedup'] / strong_df['processes']
+        # Statistiche per backend
+        f.write("STATISTICHE PER BACKEND\n")
+        f.write("-" * 40 + "\n")
         
-        plt.plot(strong_df['processes'], strong_df['speedup'], 'bo-', 
-                 linewidth=2, markersize=8, label='Speedup Osservato')
-        plt.plot(strong_df['processes'], strong_df['processes'], 'r--', 
-                 linewidth=2, label='Speedup Ideale')
+        backends = df['backend'].unique() if 'backend' in df.columns else ['sequential']
         
-        plt.xlabel('Numero di Processi')
-        plt.ylabel('Speedup')
-        plt.title(f'Strong Scaling\n(File: {fixed_size}MB)')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-    
-    # Weak scaling (problema crescente)
-    plt.subplot(1, 2, 2)
-    
-    weak_scaling_data = []
-    for num_procs in sorted(mpi_df['num_processes'].unique()):
-        # Per weak scaling, problema crescente con processi
-        proc_data = mpi_df[mpi_df['num_processes'] == num_procs]
-        if not proc_data.empty:
-            # Prendi la dimensione più grande disponibile per questo numero di processi
-            largest_size = proc_data['file_size_mb'].max()
-            time = proc_data[proc_data['file_size_mb'] == largest_size]['total_time_seconds'].values[0]
-            weak_scaling_data.append({
-                'processes': num_procs,
-                'size_mb': largest_size,
-                'time': time
-            })
-    
-    if len(weak_scaling_data) > 1:
-        weak_df = pd.DataFrame(weak_scaling_data)
-        base_time = weak_df[weak_df['processes'] == 1]['time'].values[0]
-        weak_df['efficiency'] = base_time / weak_df['time']
+        for backend in backends:
+            backend_data = df[df['backend'] == backend]
+            if len(backend_data) > 0:
+                f.write(f"\n{backend.upper()}:\n")
+                f.write(f"  • Test completati: {len(backend_data)}\n")
+                f.write(f"  • Tempo medio: {backend_data['time_seconds'].mean():.2f}s\n")
+                if 'throughput_mb_s' in backend_data.columns:
+                    f.write(f"  • Throughput medio: {backend_data['throughput_mb_s'].mean():.1f} MB/s\n")
         
-        plt.plot(weak_df['processes'], weak_df['efficiency'], 'go-', 
-                 linewidth=2, markersize=8, label='Efficienza Osservata')
-        plt.axhline(y=1.0, color='r--', linewidth=2, label='Efficienza Ideale')
+        # Analisi speedup
+        f.write("\nANALISI SPEEDUP\n")
+        f.write("-" * 40 + "\n")
         
-        plt.xlabel('Numero di Processi')
-        plt.ylabel('Efficienza')
-        plt.title('Weak Scaling Analysis')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/scaling_analysis.png', dpi=300, bbox_inches='tight')
-    plt.close()
+        if 'sequential' in backends and len(backends) > 1:
+            sequential_avg = df[df['backend'] == 'sequential']['time_seconds'].mean()
+            
+            for backend in backends:
+                if backend != 'sequential':
+                    backend_avg = df[df['backend'] == backend]['time_seconds'].mean()
+                    speedup = sequential_avg / backend_avg if backend_avg > 0 else 0
+                    f.write(f"  • {backend}: {speedup:.2f}x speedup\n")
 
 def main():
-    csv_file = "results/benchmarks/unified_benchmark_results.csv"
+    """Funzione principale aggiornata"""
     output_dir = "results/charts"
-    
     os.makedirs(output_dir, exist_ok=True)
     
-    if not os.path.exists(csv_file):
-        print(f"Error: File {csv_file} not found!")
-        print("Please run unified benchmark first: make unified-benchmark")
-        return
+    print("HPC Suffix Array - Multi-Backend Performance Analysis")
+    print("=" * 60)
     
-    print("HPC Suffix Array - Comparative Charts Generator")
+    # Genera analisi comparativa
+    create_comparative_analysis(output_dir)
+    generate_multi_backend_report(output_dir)
+    
+    print("\nANALISI MULTI-BACKEND COMPLETATA!")
     print("=" * 50)
-    
-    create_comparative_analysis(csv_file, output_dir)
-    create_scaling_analysis(csv_file, output_dir)
-    
-    print("\nComparative charts generated successfully!")
-    print(f"Charts location: {output_dir}/")
-    print("   • comparative_analysis.png - Confronto completo")
-    print("   • scaling_analysis.png - Analisi scaling MPI")
+    print("GRAFICI GENERATI:")
+    print("   • comparative_analysis.png - Confronto completo 4 quadranti")
+    print("REPORT:")
+    print("   • multi_backend_report.txt - Statistiche comparative")
+    print("BACKEND ANALIZZATI: Sequential, MPI, CUDA")
 
 if __name__ == "__main__":
     main()
