@@ -58,7 +58,7 @@ def parse_output(output):
 
 def run_mpi_benchmark(input_file, num_processes):
     """Esegue benchmark MPI"""
-    cmd = ["mpirun", "--oversubscribe", "-np", str(num_processes), "./bin/main_mpi", input_file]
+    cmd = ["mpirun", "--allow-run-as-root", "--oversubscribe", "-np", str(num_processes), "./bin/main_mpi", input_file]
     
     start_time = time.time()
     try:
@@ -145,9 +145,9 @@ def main():
         "test_data/ababab.txt",
         "test_data/large/random_1MB.txt",
         "test_data/large/random_50MB.txt",
-        #"test_data/large/random_100MB.txt",
-        #"test_data/large/random_200MB.txt",
-        #"test_data/largerandom_500MB.txt"
+        "test_data/large/random_100MB.txt",
+        "test_data/large/random_200MB.txt",
+        "test_data/largerandom_500MB.txt"
     ]
     
     mpi_results = []
