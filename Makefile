@@ -1,147 +1,173 @@
-# Compiler and flags
+# === COMPILER AND FLAGS ===
 CC = gcc
+MPICC = mpicc
 CFLAGS = -Wall -Wextra -O3 -std=c99
-LDFLAGS = 
+LDFLAGS =
 
-# Directories
+# === DIRECTORIES ===
 SRC_DIR = src
-SEQ_DIR = $(SRC_DIR)/sequential
-COMMON_DIR = $(SRC_DIR)/common
-BENCH_DIR = $(SRC_DIR)/benchmark
 BIN_DIR = bin
+COMMON_DIR = $(SRC_DIR)/common
+SEQ_DIR = $(SRC_DIR)/sequential
+MPI_DIR = $(SRC_DIR)/mpi
+BENCH_DIR = $(SRC_DIR)/benchmark
 
-# Source files
+# === SOURCE AND OBJECT FILES ===
+# Common
 COMMON_SRC = $(COMMON_DIR)/utils.c
-SEQ_SRC = $(SEQ_DIR)/manber_myers.c
-BENCH_SRC = $(BENCH_DIR)/suffix_array_benchmark.c $(BENCH_DIR)/main_benchmark.c
-
-# Object files
 COMMON_OBJ = $(COMMON_SRC:.c=.o)
-SEQ_OBJ = $(SEQ_SRC:.c=.o)
+
+# Sequential
+SEQ_SRC = $(SEQ_DIR)/manber_myers.c
+SEQ_MAIN_SRC = $(SEQ_DIR)/main_sequential.c
+SEQ_OBJ = $(COMMON_OBJ) $(SEQ_SRC:.c=.o) $(SEQ_MAIN_SRC:.c=.o)
+
+# MPI
+MPI_SRC = $(MPI_DIR)/manber_myers_mpi.c
+MPI_MAIN_SRC = $(MPI_DIR)/main_mpi.c
+MPI_OBJ = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(MPI_SRC:.c=.o) $(MPI_MAIN_SRC:.c=.o)
+
+# Benchmark
+BENCH_SRC = $(BENCH_DIR)/main_benchmark.c
 BENCH_OBJ = $(BENCH_SRC:.c=.o)
 
-# Targets
-TARGET_SEQ = $(BIN_DIR)/sequential_suffix_array
+# === TARGETS ===
+TARGET_SEQ = $(BIN_DIR)/main_sequential
+TARGET_MPI = $(BIN_DIR)/main_mpi
 TARGET_BENCH = $(BIN_DIR)/suffix_array_benchmark
 
-.PHONY: all sequential benchmark charts clean run-benchmark test env-setup
+.PHONY: all sequential mpi benchmark charts clean distclean run-benchmark run-benchmark-mpi run-mpi test test-mpi test-correctness env-setup help generate-data
 
-all: sequential benchmark
+# === PRIMARY TARGETS ===
+all: sequential mpi benchmark
 
 sequential: $(TARGET_SEQ)
 
+mpi: $(TARGET_MPI)
+
 benchmark: $(TARGET_BENCH)
 
-benchmark-large:
-	@echo "Running large-scale benchmark..."
-	@python3 scripts/run_large_benchmark.py
-
-
-memory-test:
-	@echo "Running memory usage tests..."
-	@python3 scripts/monitor_memory.py
-
-performance-charts:
-	@echo "Generating performance charts..."
-	@./hpc_env/bin/python scripts/generate_performance_charts.py
-
-full-benchmark: benchmark-large performance-charts
-	@echo "Full benchmark completed!"
-	@echo "Charts generated in results/charts/"
-
-test-large: sequential
-	@echo "Testing on large datasets..."
-	@echo "1MB test:"
-	@./$(TARGET_SEQ) test_data/large/random_1MB.txt | grep -E "(Longest repeated substring|Time|Length)"
-	@echo ""
-	@echo "50MB test:" 
-	@timeout 300 ./$(TARGET_SEQ) test_data/large/random_50MB.txt | grep -E "(Longest repeated substring|Time|Length)" || echo "Timeout or error"
-
-generate-data:
-	@echo "Generating test datasets..."
-	@python3 scripts/generate_large_datasets.py
-
-# Target sequenziale include main_sequential.o
-$(TARGET_SEQ): $(SEQ_OBJ) $(COMMON_OBJ) src/sequential/main_sequential.o | $(BIN_DIR)
+# === LINKING RULES ===
+# Linking Sequential Target
+$(TARGET_SEQ): $(SEQ_OBJ) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Target benchmark NON include main_sequential.o
-$(TARGET_BENCH): $(BENCH_OBJ) $(COMMON_OBJ) $(SEQ_OBJ) | $(BIN_DIR)
+# Linking MPI Target
+$(TARGET_MPI): $(MPI_OBJ) | $(BIN_DIR)
+	$(MPICC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Linking Benchmark Target (uses sequential manber_myers.c)
+$(TARGET_BENCH): $(BENCH_OBJ) $(SEQ_DIR)/manber_myers.o $(COMMON_OBJ) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# Regole di compilazione
+# === COMPILATION RULES (PATTERN RULES) ===
+# Compile common source files
 $(COMMON_DIR)/%.o: $(COMMON_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Compile sequential source files
 $(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Compile MPI source files
+$(MPI_DIR)/%.o: $(MPI_DIR)/%.c
+	$(MPICC) $(CFLAGS) -c -o $@ $<
+
+# Compile benchmark source files
 $(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Regola specifica per main_sequential.o
-src/sequential/main_sequential.o: src/sequential/main_sequential.c
-	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Setup ambiente Python
+# === UTILITY & TESTING TARGETS ===
+# Setup Python virtual environment
 env-setup:
-	sudo apt update
-	sudo apt install -y python3-full python3-venv
+	@echo "Setting up Python virtual environment..."
+	sudo apt-get update && sudo apt-get install -y python3-full python3-venv
 	python3 -m venv hpc_env
 	./hpc_env/bin/pip install pandas matplotlib seaborn numpy
-	@echo "✅ Ambiente Python configurato!"
+	@echo "Python environment configured in ./hpc_env/"
 
-# Genera grafici usando il virtual environment
+# Generate test data
+generate-data:
+	@echo "Generating large test datasets..."
+	@python3 scripts/generate_large_datasets.py
+
+# Generate charts from benchmark results
 charts:
-	./hpc_env/bin/python scripts/generate_charts.py
+	@echo "Generating charts..."
+	./hpc_env/bin/python3 scripts/generate_charts.py
 
-# Esegui tutto il benchmark (compilazione + esecuzione + grafici)
+# Run sequential benchmark and generate charts
 run-benchmark: benchmark
 	./$(TARGET_BENCH)
-	./hpc_env/bin/python scripts/generate_charts.py
+	make charts
 
-# Test base della versione sequenziale
+# Run MPI benchmark and save results
+run-benchmark-mpi: mpi
+	@echo "Running MPI benchmark..."
+	./hpc_env/bin/python3 scripts/benchmark_mpi.py
+
+# Run MPI version on a large file for a quick test
+run-mpi: mpi
+	@echo "Running MPI version on 500MB file with 4 processes..."
+	mpirun -np 4 ./$(TARGET_MPI) test_data/random_500MB.txt
+
+# Basic sequential tests
 test: sequential
 	@echo "=== TESTING SEQUENTIAL VERSION ==="
 	./$(TARGET_SEQ) "banana"
 	@echo ""
 	./$(TARGET_SEQ) "mississippi"
-	@echo ""
-	./$(TARGET_SEQ) "abcabcabc"
 
-# Test di correttezza
+# Basic MPI tests
+test-mpi: mpi
+	@echo "=== TESTING MPI VERSION (4 processes) ==="
+	mpirun -np 4 ./$(TARGET_MPI) test_data/banana.txt
+
+# Correctness tests for sequential version
 test-correctness: sequential
 	@echo "=== CORRECTNESS TESTS ==="
 	@echo "Test 1: 'banana' (expected: 'ana')"
-	./$(TARGET_SEQ) "banana" | grep "Longest repeated substring"
-	@echo "Test 2: 'mississippi' (expected: 'issi')" 
-	./$(TARGET_SEQ) "mississippi" | grep "Longest repeated substring"
+	@./$(TARGET_SEQ) "banana" | grep "Longest repeated substring"
+	@echo "Test 2: 'mississippi' (expected: 'issi')"
+	@./$(TARGET_SEQ) "mississippi" | grep "Longest repeated substring"
 	@echo "Test 3: 'abcabcabc' (expected: 'abcabc')"
-	./$(TARGET_SEQ) "abcabcabc" | grep "Longest repeated substring"
+	@./$(TARGET_SEQ) "abcabcabc" | grep "Longest repeated substring"
 
-# Pulizia completa
+# === CLEANING TARGETS ===
 clean:
-	rm -f $(COMMON_OBJ) $(SEQ_OBJ) $(BENCH_OBJ) src/sequential/main_sequential.o $(TARGET_SEQ) $(TARGET_BENCH)
+	@echo "Cleaning build files..."
+	rm -f $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(COMMON_DIR)/*.o $(BENCH_DIR)/*.o
+	rm -f $(TARGET_SEQ) $(TARGET_MPI) $(TARGET_BENCH)
 	rm -rf results/csv/*.csv results/charts/*.png
 
-# Pulizia estrema (include virtual environment)
 distclean: clean
-	rm -rf hpc_env bin
+	@echo "Performing deep clean (removes Python venv and bin)..."
+	rm -rf hpc_env $(BIN_DIR)
 
-# Help
+# === HELP TARGET ===
 help:
 	@echo "=== HPC SUFFIX ARRAY MAKEFILE TARGETS ==="
-	@echo "make all              - Compila tutto (sequential + benchmark)"
-	@echo "make sequential       - Compila solo la versione sequenziale"
-	@echo "make benchmark        - Compila solo il benchmark"
-	@echo "make run-benchmark    - Esegue benchmark completo + grafici"
-	@echo "make test             - Test di base con stringhe note"
-	@echo "make test-correctness - Test di correttezza dettagliato"
-	@echo "make charts           - Genera solo i grafici (dopo benchmark)"
-	@echo "make env-setup        - Configura ambiente Python"
-	@echo "make clean            - Pulizia file oggetto e eseguibili"
-	@echo "make distclean        - Pulizia completa (include virtual env)"
-	@echo "make help             - Mostra questo help"
+	@echo "--- Build Targets ---"
+	@echo "  make all                - Compila tutte le versioni (sequential, mpi, benchmark)"
+	@echo "  make sequential         - Compila solo la versione sequenziale"
+	@echo "  make mpi                - Compila solo la versione MPI"
+	@echo "  make benchmark          - Compila l'eseguibile per il benchmark sequenziale"
+	@echo ""
+	@echo "--- Execution & Testing ---"
+	@echo "  make run-benchmark      - Esegue il benchmark sequenziale e genera i grafici"
+	@echo "  make run-benchmark-mpi  - Esegue il benchmark MPI e salva i risultati"
+	@echo "  make test               - Esegue test di base sulla versione sequenziale"
+	@echo "  make test-mpi           - Esegue test di base sulla versione MPI"
+	@echo "  make test-correctness   - Test di correttezza con output atteso"
+	@echo ""
+	@echo "--- Utility Targets ---"
+	@echo "  make generate-data      - Genera i file di test di grandi dimensioni"
+	@echo "  make charts             - Genera i grafici dai risultati dei benchmark"
+	@echo "  make env-setup          - Configura l'ambiente virtuale Python per i grafici"
+	@echo "  make clean              - Rimuove i file oggetto e gli eseguibili"
+	@echo "  make distclean          - Rimuove tutto, incluso l'ambiente Python"
+	@echo "  make help               - Mostra questo messaggio di aiuto"

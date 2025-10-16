@@ -35,7 +35,6 @@ void print_first_suffixes(SuffixArray* sa, int count) {
     }
 }
 
-// AGGIUNGI QUESTA FUNZIONE - OUTPUT STRUTTURATO PER BENCHMARK
 void print_structured_results(const char* implementation, const char* filename, 
                              long file_size, double total_time, double sa_time, 
                              double lcp_time, int num_processes) {
@@ -149,7 +148,6 @@ int main(int argc, char* argv[]) {
         printf("]\n");
     }
     
-    // AGGIUNGI: OUTPUT STRUTTURATO PER BENCHMARK UNIFICATO
     print_structured_results("sequential", filename, n, 
                            end_time - start_time, 
                            mid_time - start_time,

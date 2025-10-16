@@ -11,63 +11,61 @@ from datetime import datetime
 import re
 
 def parse_output(output):
-    """Estrae informazioni dettagliate dall'output del programma MPI"""
+    """Estrae informazioni dettagliate dall'output del programma MPI."""
     result = {
-        'lrs_length': 0,
-        'lrs_string': 'N/A',
-        'suffix_array_length': 0,
-        'execution_details': 'N/A',
-        'mpi_processes': 0,
-        'parallel_efficiency': 0.0
+        'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0,
+        'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0,
+        'parallel_efficiency': 0.0, 'execution_details': 'N/A'
     }
+
+    # 1. Cerca i dati leggibili dall'utente per un fallback
+    lrs_match = re.search(r"Longest repeated substring:.*\(length: (\d+)\)", output)
+    if lrs_match:
+        result['lrs_length'] = int(lrs_match.group(1))
+
+    lrs_str_match = re.search(r"Longest repeated substring: '([^']*)'", output)
+    if lrs_str_match:
+        result['lrs_string'] = lrs_str_match.group(1)
+
+    # 2. Estrae i dati precisi dal blocco strutturato (il nostro obiettivo primario)
+    if '--- STRUCTURED_RESULTS ---' in output:
+        # Isola solo il blocco di dati che ci interessa
+        structured_data = output.split('--- STRUCTURED_RESULTS ---')[1]
+
+        # Cerca ogni etichetta che abbiamo definito nel C
+        sa_time_match = re.search(r"SA_TIME:([\d.]+)", structured_data)
+        if sa_time_match: result['sa_time'] = float(sa_time_match.group(1))
+
+        lcp_time_match = re.search(r"LCP_TIME:([\d.]+)", structured_data)
+        if lcp_time_match: result['lcp_time'] = float(lcp_time_match.group(1))
+
+        total_time_match = re.search(r"TOTAL_TIME:([\d.]+)", structured_data)
+        if total_time_match: result['total_time'] = float(total_time_match.group(1))
+
+        procs_match = re.search(r"MPI_PROCESSES:(\d+)", structured_data)
+        if procs_match: result['mpi_processes'] = int(procs_match.group(1))
+
+        len_match = re.search(r"ACTUAL_STRING_LENGTH:(\d+)", structured_data)
+        if len_match: result['suffix_array_length'] = int(len_match.group(1))
     
-    lines = output.split('\n')
-    
-    for i, line in enumerate(lines):
-        # Cerca informazioni MPI
-        if 'MPI processes:' in line or 'Processes:' in line:
-            match = re.search(r'(\d+)', line)
-            if match:
-                result['mpi_processes'] = int(match.group(1))
-        
-        # Cerca lunghezza LRS
-        if 'LRS length:' in line or 'Longest repeated substring length:' in line:
-            match = re.search(r'(\d+)', line)
-            if match:
-                result['lrs_length'] = int(match.group(1))
-        
-        # Cerca stringa LRS
-        if 'Longest repeated substring:' in line and 'length' not in line.lower():
-            lrs_str = line.split(':', 1)[1].strip()
-            if lrs_str and lrs_str != '""':
-                result['lrs_string'] = lrs_str[:50]  # Limita a 50 caratteri
-        
-        # Cerca informazioni sul suffix array
-        if 'Suffix array built successfully' in line or 'n =' in line:
-            match = re.search(r'n\s*=\s*(\d+)', line)
-            if match:
-                result['suffix_array_length'] = int(match.group(1))
-        
-        # Estrai dettagli di esecuzione e efficienza
-        if 'Time for building suffix array:' in line:
-            result['execution_details'] = line.strip()
-        if 'Parallel efficiency:' in line or 'Efficiency:' in line:
-            match = re.search(r'(\d+\.\d+)', line)
-            if match:
-                result['parallel_efficiency'] = float(match.group(1))
-    
+    # Se il total_time non è stato trovato nel blocco strutturato, prova a prenderlo dall'output leggibile
+    if result['total_time'] == 0.0:
+        total_time_fallback = re.search(r"Total execution time: ([\d.]+)", output)
+        if total_time_fallback:
+            result['total_time'] = float(total_time_fallback.group(1))
+
     return result
 
 def run_mpi_benchmark(input_file, num_processes):
     """Esegue benchmark MPI"""
-    cmd = ["mpirun", "-np", str(num_processes), "./bin/mpi_suffix_array", input_file]
+    cmd = ["mpirun", "--oversubscribe", "-np", str(num_processes), "./bin/main_mpi", input_file]
     
     start_time = time.time()
     try:
         result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
+            cmd,
+            capture_output=True,
+            text=True,
             timeout=3600  # 1 ora timeout
         )
         execution_time = time.time() - start_time
@@ -84,31 +82,40 @@ def run_mpi_benchmark(input_file, num_processes):
             'lrs_string': parsed_info['lrs_string'],
             'suffix_array_length': parsed_info['suffix_array_length'],
             'execution_details': parsed_info['execution_details'],
+            'total_time': parsed_info['total_time'],
+            'sa_time': parsed_info['sa_time'],
+            'lcp_time': parsed_info['lcp_time'],
             'mpi_processes': parsed_info['mpi_processes'],
             'parallel_efficiency': parsed_info['parallel_efficiency']
         }
         
     except subprocess.TimeoutExpired:
         return {
-            'success': False, 
-            'time': 3600, 
+            'success': False,
+            'time': 3600,
             'error': 'TIMEOUT',
             'lrs_length': 0,
             'lrs_string': 'TIMEOUT',
             'suffix_array_length': 0,
             'execution_details': 'TIMEOUT',
+            'total_time': 0.0,
+            'sa_time': 0.0,
+            'lcp_time': 0.0,
             'mpi_processes': num_processes,
             'parallel_efficiency': 0.0
         }
     except Exception as e:
         return {
-            'success': False, 
-            'time': 0, 
+            'success': False,
+            'time': 0,
             'error': str(e),
             'lrs_length': 0,
             'lrs_string': 'ERROR',
             'suffix_array_length': 0,
             'execution_details': 'ERROR',
+            'total_time': 0.0,
+            'sa_time': 0.0,
+            'lcp_time': 0.0,
             'mpi_processes': num_processes,
             'parallel_efficiency': 0.0
         }
@@ -116,15 +123,12 @@ def run_mpi_benchmark(input_file, num_processes):
 def format_time(seconds):
     """Formatta il tempo in modo leggibile"""
     if seconds < 1:
-        return f"{seconds:.2f}s"
+        return f"{seconds*1000:.0f}ms"
     elif seconds < 60:
         return f"{seconds:.2f}s"
-    elif seconds < 3600:
+    else:
         minutes = seconds / 60
         return f"{minutes:.1f}m"
-    else:
-        hours = seconds / 3600
-        return f"{hours:.1f}h"
 
 def main():
     print("BENCHMARK MPI - Suffix Array")
@@ -141,11 +145,13 @@ def main():
         "test_data/ababab.txt",
         "test_data/large/random_1MB.txt",
         "test_data/large/random_50MB.txt",
-        "test_data/large/random_100MB.txt"
+        #"test_data/large/random_100MB.txt",
+        #"test_data/large/random_200MB.txt",
+        #"test_data/largerandom_500MB.txt"
     ]
     
     mpi_results = []
-    process_configs = [2, 4]  # Test con 2 e 4 processi
+    process_configs = [2, 4, 8]  # Test con 2, 4 e 8 processi
 
     print("Testing MPI con diverse configurazioni...")
     print("------------------------------------------------------------")
@@ -158,7 +164,7 @@ def main():
         file_size = os.path.getsize(test_file)
         file_size_mb = file_size / (1024 * 1024)
         
-        print(f"{os.path.basename(test_file):25} ({file_size_mb:6.1f} MB)")
+        print(f"{os.path.basename(test_file):25} ({file_size_mb:6.2f} MB)")
         
         for num_proc in process_configs:
             print(f"  MPI-{num_proc:2} processi...", end=" ", flush=True)
@@ -166,9 +172,8 @@ def main():
             result = run_mpi_benchmark(test_file, num_proc)
             
             if result['success']:
-                time_str = format_time(result['time'])
-                efficiency_str = f"{result['parallel_efficiency']*100:.1f}%" if result['parallel_efficiency'] > 0 else "N/A"
-                print(f"{time_str:>8} - LRS: {result['lrs_length']:3} chars - Eff: {efficiency_str:>6}")
+                time_str = format_time(result['total_time'])
+                print(f"OK ({time_str:>7}) - LRS Length: {result['lrs_length']}")
                 
                 mpi_results.append({
                     'file': os.path.basename(test_file),
@@ -176,79 +181,52 @@ def main():
                     'size_mb': file_size_mb,
                     'backend': f'mpi_{num_proc}',
                     'processes': num_proc,
-                    'time_seconds': result['time'],
-                    'throughput_mb_s': file_size_mb / result['time'] if result['time'] > 0 else 0,
-                    'throughput_chars_per_second': file_size / result['time'] if result['time'] > 0 else 0,
-                    'lrs_length': result['lrs_length'],
-                    'lrs_string': result['lrs_string'],
-                    'suffix_array_length': result['suffix_array_length'],
-                    'execution_details': result['execution_details'],
-                    'parallel_efficiency': result['parallel_efficiency'],
-                    'speedup': 0.0,  # Sarà calcolato dopo
-                    'success': True,
-                    'timestamp': datetime.now()
+                    'time_seconds': result['total_time'],
+                    'sa_time': result['sa_time'],
+                    'lcp_time': result['lcp_time']
                 })
             else:
-                print("FAILED")
-                if result['error']:
-                    print(f"        Error: {result['error'][:100]}")
+                print(f"FAILED - Error: {result['error']}")
 
-    # Calcola speedup rispetto alla versione sequenziale
+    # Calcola speedup e efficienza
     if mpi_results:
-        # Carica risultati sequenziali per confronto
-        sequential_times = {}
+        df = pd.DataFrame(mpi_results)
+        
+        # Carica i tempi della versione sequenziale per il confronto
+        seq_times = {}
         try:
-            if os.path.exists("results/benchmarks/sequential_results.csv"):
-                df_seq = pd.read_csv("results/benchmarks/sequential_results.csv")
-                for _, row in df_seq.iterrows():
-                    sequential_times[row['file']] = row['time_seconds']
-        except:
-            pass
+            df_seq = pd.read_csv("results/csv/sequential_results.csv")
+            seq_times = pd.Series(df_seq.sa_time.values, index=df_seq.file).to_dict()
+        except FileNotFoundError:
+            print("\nAttenzione: file dei risultati sequenziali non trovato. Speedup non calcolato.")
         
-        # Calcola speedup per ogni risultato MPI
-        for result in mpi_results:
-            file_name = result['file']
-            if file_name in sequential_times and sequential_times[file_name] > 0:
-                result['speedup'] = sequential_times[file_name] / result['time_seconds']
-            else:
-                result['speedup'] = 0.0
+        df['speedup'] = df.apply(
+            lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
+            axis=1
+        )
+        df['efficiency'] = df.apply(
+            lambda row: row['speedup'] / row['processes'] if row['processes'] > 0 else 0,
+            axis=1
+        )
 
-    # Salva risultati
-    if mpi_results:
-        df_mpi = pd.DataFrame(mpi_results)
-        os.makedirs("results/benchmarks", exist_ok=True)
-        output_file = "results/benchmarks/mpi_results.csv"
-        
-        df_mpi.to_csv(output_file, index=False)
-        
-        # Calcola statistiche
-        total_tests = len(mpi_results)
-        successful_tests = len([r for r in mpi_results if r['success']])
+        # Salva i risultati
+        os.makedirs("results/csv", exist_ok=True)
+        output_file = "results/csv/mpi_results.csv"
+        df.to_csv(output_file, index=False)
         
         print("\n" + "=" * 60)
         print("BENCHMARK MPI COMPLETATO")
+        print(f"Risultati salvati in: {output_file}")
         print("=" * 60)
-        print(f"Risultati salvati: {output_file}")
-        print(f"Test completati: {successful_tests}/{total_tests}")
         
-        # Stampa tabella riassuntiva comparativa
-        if mpi_results:
-            print("\nRIEPILOGO DETTAGLIATO MPI:")
-            print("-" * 90)
-            print(f"{'File':25} {'Proc':>4} {'Time':>8} {'LRS Len':>8} {'Speedup':>8} {'Efficiency':>10} {'LRS Preview':20}")
-            print("-" * 90)
-            
-            for result in mpi_results:
-                if result['success']:
-                    lrs_preview = result['lrs_string'][:18] + "..." if len(result['lrs_string']) > 18 else result['lrs_string']
-                    efficiency_str = f"{result['parallel_efficiency']*100:.1f}%" if result['parallel_efficiency'] > 0 else "N/A"
-                    speedup_str = f"{result['speedup']:.2f}x" if result['speedup'] > 0 else "N/A"
-                    
-                    print(f"{result['file']:25} {result['processes']:4} {format_time(result['time_seconds']):>8} {result['lrs_length']:>8} {speedup_str:>8} {efficiency_str:>10} {lrs_preview:20}")
-            
-    else:
-        print("\nNessun test MPI completato!")
-        sys.exit(1)
+        print("\nRIEPILOGO RISULTATI:")
+        print("-" * 65)
+        print(f"{'File':<25} {'Proc':>5} {'Tempo SA':>10} {'Speedup':>10} {'Efficienza':>12}")
+        print("-" * 65)
+        for _, row in df.iterrows():
+            efficiency_str = f"{row['efficiency'] * 100:.1f}%"
+            print(f"{row['file']:<25} {row['processes']:>5} {format_time(row['sa_time']):>10} {row['speedup']:>9.2f}x {efficiency_str:>12}")
+        print("-" * 65)
 
 if __name__ == "__main__":
     main()
