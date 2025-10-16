@@ -16,33 +16,58 @@ def parse_output(output):
         'lrs_length': 0,
         'lrs_string': 'N/A',
         'suffix_array_length': 0,
-        'execution_details': 'N/A'
+        'execution_details': 'N/A',
+        'total_time': 0.0,
+        'sa_time': 0.0,
+        'lcp_time': 0.0
     }
     
     lines = output.split('\n')
     
-    for i, line in enumerate(lines):
-        # Cerca lunghezza LRS
-        if 'LRS length:' in line or 'Longest repeated substring length:' in line:
-            match = re.search(r'(\d+)', line)
-            if match:
-                result['lrs_length'] = int(match.group(1))
+    for line in lines:
+        # Cerca lunghezza LRS - formato: "Longest repeated substring: 'ana' (length: 3)"
+        if 'Longest repeated substring:' in line and 'length:' in line:
+            # Estrai la lunghezza
+            length_match = re.search(r'length:\s*(\d+)', line)
+            if length_match:
+                result['lrs_length'] = int(length_match.group(1))
+            
+            # Estrai la stringa LRS
+            string_match = re.search(r"substring:\s*'([^']*)'", line)
+            if string_match:
+                result['lrs_string'] = string_match.group(1)
+            else:
+                # Prova formato alternativo con virgolette doppie
+                string_match = re.search(r'substring:\s*"([^"]*)"', line)
+                if string_match:
+                    result['lrs_string'] = string_match.group(1)
         
-        # Cerca stringa LRS
-        if 'Longest repeated substring:' in line and 'length' not in line.lower():
-            lrs_str = line.split(':', 1)[1].strip()
-            if lrs_str and lrs_str != '""':
-                result['lrs_string'] = lrs_str[:50]  # Limita a 50 caratteri
-        
-        # Cerca informazioni sul suffix array
-        if 'Suffix array built successfully' in line or 'n =' in line:
-            match = re.search(r'n\s*=\s*(\d+)', line)
+        # Cerca informazioni sul suffix array - formato: "Actual string length: 6"
+        if 'Actual string length:' in line:
+            match = re.search(r'Actual string length:\s*(\d+)', line)
             if match:
                 result['suffix_array_length'] = int(match.group(1))
         
-        # Estrai dettagli di esecuzione
-        if 'Time for building suffix array:' in line:
-            result['execution_details'] = line.strip()
+        # Estrai tempi di esecuzione
+        if 'Total execution time:' in line:
+            match = re.search(r'Total execution time:\s*([\d.]+)', line)
+            if match:
+                result['total_time'] = float(match.group(1))
+                result['execution_details'] = line.strip()
+        
+        # Estrai tempi specifici dalla sezione STRUCTURED_RESULTS
+        if 'TOTAL_TIME:' in line:
+            match = re.search(r'TOTAL_TIME:([\d.]+)', line)
+            if match:
+                result['total_time'] = float(match.group(1))
+        if 'SA_TIME:' in line:
+            match = re.search(r'SA_TIME:([\d.]+)', line)
+            if match:
+                result['sa_time'] = float(match.group(1))
+        if 'LCP_TIME:' in line:
+            match = re.search(r'LCP_TIME:([\d.]+)', line)
+            if match:
+                result['lcp_time'] = float(match.group(1))
     
     return result
 
@@ -71,7 +96,10 @@ def run_benchmark(input_file):
             'lrs_length': parsed_info['lrs_length'],
             'lrs_string': parsed_info['lrs_string'],
             'suffix_array_length': parsed_info['suffix_array_length'],
-            'execution_details': parsed_info['execution_details']
+            'execution_details': parsed_info['execution_details'],
+            'total_time': parsed_info['total_time'],
+            'sa_time': parsed_info['sa_time'],
+            'lcp_time': parsed_info['lcp_time']
         }
         
     except subprocess.TimeoutExpired:
@@ -82,7 +110,10 @@ def run_benchmark(input_file):
             'lrs_length': 0,
             'lrs_string': 'TIMEOUT',
             'suffix_array_length': 0,
-            'execution_details': 'TIMEOUT'
+            'execution_details': 'TIMEOUT',
+            'total_time': 0.0,
+            'sa_time': 0.0,
+            'lcp_time': 0.0
         }
     except Exception as e:
         return {
@@ -92,13 +123,18 @@ def run_benchmark(input_file):
             'lrs_length': 0,
             'lrs_string': 'ERROR',
             'suffix_array_length': 0,
-            'execution_details': 'ERROR'
+            'execution_details': 'ERROR',
+            'total_time': 0.0,
+            'sa_time': 0.0,
+            'lcp_time': 0.0
         }
 
 def format_time(seconds):
     """Formatta il tempo in modo leggibile"""
-    if seconds < 1:
-        return f"{seconds:.2f}s"
+    if seconds < 0.001:
+        return f"{seconds*1000:.2f}ms"
+    elif seconds < 1:
+        return f"{seconds*1000:.0f}ms"
     elif seconds < 60:
         return f"{seconds:.2f}s"
     elif seconds < 3600:
@@ -149,7 +185,8 @@ def main():
         
         if result['success']:
             time_str = format_time(result['time'])
-            print(f"{time_str:>8} - LRS: {result['lrs_length']} chars")
+            lrs_preview = result['lrs_string'][:20] if result['lrs_string'] != 'N/A' else 'N/A'
+            print(f"{time_str:>8} - LRS: {result['lrs_length']:3} chars ('{lrs_preview}')")
             successful_tests += 1
             
             sequential_results.append({
@@ -164,6 +201,9 @@ def main():
                 'lrs_string': result['lrs_string'],
                 'suffix_array_length': result['suffix_array_length'],
                 'execution_details': result['execution_details'],
+                'total_time': result['total_time'],
+                'sa_time': result['sa_time'],
+                'lcp_time': result['lcp_time'],
                 'success': True,
                 'timestamp': datetime.now()
             })
