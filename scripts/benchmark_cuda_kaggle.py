@@ -7,6 +7,75 @@ import time
 import os
 import pandas as pd
 from datetime import datetime
+import re
+
+def parse_output(output):
+    """Estrae informazioni dettagliate dall'output del programma CUDA"""
+    result = {
+        'lrs_length': 0,
+        'lrs_string': 'N/A',
+        'suffix_array_length': 0,
+        'execution_details': 'N/A',
+        'gpu_memory_used': 0,
+        'gpu_utilization': 0.0,
+        'cuda_kernel_times': 'N/A',
+        'speedup_vs_cpu': 0.0
+    }
+    
+    lines = output.split('\n')
+    
+    for i, line in enumerate(lines):
+        # Cerca informazioni GPU
+        if 'GPU memory used:' in line or 'Memory used:' in line:
+            match = re.search(r'(\d+\.?\d*)\s*([KMG]?B)', line, re.IGNORECASE)
+            if match:
+                value = float(match.group(1))
+                unit = match.group(2).upper()
+                # Converti in MB
+                if unit == 'KB':
+                    result['gpu_memory_used'] = value / 1024
+                elif unit == 'GB':
+                    result['gpu_memory_used'] = value * 1024
+                else:  # MB
+                    result['gpu_memory_used'] = value
+        
+        # Cerca utilizzo GPU
+        if 'GPU utilization:' in line or 'Utilization:' in line:
+            match = re.search(r'(\d+\.?\d*)%', line)
+            if match:
+                result['gpu_utilization'] = float(match.group(1))
+        
+        # Cerca lunghezza LRS
+        if 'LRS length:' in line or 'Longest repeated substring length:' in line:
+            match = re.search(r'(\d+)', line)
+            if match:
+                result['lrs_length'] = int(match.group(1))
+        
+        # Cerca stringa LRS
+        if 'Longest repeated substring:' in line and 'length' not in line.lower():
+            lrs_str = line.split(':', 1)[1].strip()
+            if lrs_str and lrs_str != '""':
+                result['lrs_string'] = lrs_str[:50]  # Limita a 50 caratteri
+        
+        # Cerca informazioni sul suffix array
+        if 'Suffix array built successfully' in line or 'n =' in line:
+            match = re.search(r'n\s*=\s*(\d+)', line)
+            if match:
+                result['suffix_array_length'] = int(match.group(1))
+        
+        # Estrai dettagli di esecuzione CUDA
+        if 'CUDA kernel time:' in line or 'Kernel time:' in line:
+            result['cuda_kernel_times'] = line.strip()
+        elif 'Time for building suffix array:' in line:
+            result['execution_details'] = line.strip()
+        
+        # Cerca speedup rispetto alla CPU
+        if 'Speedup vs CPU:' in line or 'Speedup:' in line:
+            match = re.search(r'(\d+\.\d+)', line)
+            if match:
+                result['speedup_vs_cpu'] = float(match.group(1))
+    
+    return result
 
 def run_cuda_benchmark(input_file):
     """Esegue benchmark CUDA"""
@@ -22,51 +91,106 @@ def run_cuda_benchmark(input_file):
         )
         execution_time = time.time() - start_time
         
-        # Estrai risultato LRS
-        lrs_info = "N/A"
-        for line in result.stdout.split('\n'):
-            if "Longest repeated substring" in line or "length:" in line.lower():
-                lrs_info = line.strip()[:60]
-                break
+        # Estrai informazioni dettagliate dall'output
+        parsed_info = parse_output(result.stdout)
         
         return {
             'success': result.returncode == 0,
             'time': execution_time,
             'output': result.stdout,
             'error': result.stderr,
-            'lrs': lrs_info
+            'lrs_length': parsed_info['lrs_length'],
+            'lrs_string': parsed_info['lrs_string'],
+            'suffix_array_length': parsed_info['suffix_array_length'],
+            'execution_details': parsed_info['execution_details'],
+            'gpu_memory_used_mb': parsed_info['gpu_memory_used'],
+            'gpu_utilization': parsed_info['gpu_utilization'],
+            'cuda_kernel_times': parsed_info['cuda_kernel_times'],
+            'speedup_vs_cpu': parsed_info['speedup_vs_cpu']
         }
         
     except subprocess.TimeoutExpired:
-        return {'success': False, 'time': 3600, 'error': 'TIMEOUT'}
+        return {
+            'success': False, 
+            'time': 3600, 
+            'error': 'TIMEOUT',
+            'lrs_length': 0,
+            'lrs_string': 'TIMEOUT',
+            'suffix_array_length': 0,
+            'execution_details': 'TIMEOUT',
+            'gpu_memory_used_mb': 0,
+            'gpu_utilization': 0.0,
+            'cuda_kernel_times': 'TIMEOUT',
+            'speedup_vs_cpu': 0.0
+        }
     except Exception as e:
-        return {'success': False, 'time': 0, 'error': str(e)}
+        return {
+            'success': False, 
+            'time': 0, 
+            'error': str(e),
+            'lrs_length': 0,
+            'lrs_string': 'ERROR',
+            'suffix_array_length': 0,
+            'execution_details': 'ERROR',
+            'gpu_memory_used_mb': 0,
+            'gpu_utilization': 0.0,
+            'cuda_kernel_times': 'ERROR',
+            'speedup_vs_cpu': 0.0
+        }
+
+def format_time(seconds):
+    """Formatta il tempo in modo leggibile"""
+    if seconds < 0.001:
+        return f"{seconds*1000:.1f}ms"
+    elif seconds < 1:
+        return f"{seconds*1000:.0f}ms"
+    elif seconds < 60:
+        return f"{seconds:.2f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m"
+    else:
+        hours = seconds / 3600
+        return f"{hours:.1f}h"
+
+def format_memory(mb):
+    """Formatta la memoria in modo leggibile"""
+    if mb < 1:
+        return f"{mb*1024:.0f} KB"
+    elif mb < 1024:
+        return f"{mb:.0f} MB"
+    else:
+        return f"{mb/1024:.1f} GB"
 
 def main():
     print("CUDA BENCHMARK - KAGGLE GPU")
-    print("=" * 60)
+    print("============================================================")
     print(f"Avviato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("ATTENZIONE: Questo script richiede GPU NVIDIA")
     print()
     
-    # File di test per CUDA (più piccoli per limiti memoria GPU)
+    # File di test per CUDA
     cuda_files = [
         "test_data/banana.txt",
         "test_data/mississippi.txt",
+        "test_data/abcabcabc.txt",
+        "test_data/aaaa.txt",
+        "test_data/ababab.txt",
         "test_data/large/random_1MB.txt",
         "test_data/large/random_50MB.txt", 
-        "test_data/large/random_100MB.txt"
+        "test_data/large/random_100MB.txt",
+        "test_data/large/random_200MB.txt"
     ]
 
     cuda_results = []
     successful_tests = 0
 
     print("Testing versione CUDA...")
-    print("-" * 60)
+    print("------------------------------------------------------------")
     
     for test_file in cuda_files:
         if not os.path.exists(test_file):
-            print(f"{test_file} - NON TROVATO")
+            print(f"{os.path.basename(test_file):25} - NON TROVATO")
             continue
             
         file_size = os.path.getsize(test_file)
@@ -77,7 +201,10 @@ def main():
         result = run_cuda_benchmark(test_file)
         
         if result['success']:
-            print(f"{result['time']:7.2f}s")
+            time_str = format_time(result['time'])
+            speedup_str = f"{result['speedup_vs_cpu']:.2f}x" if result['speedup_vs_cpu'] > 0 else "N/A"
+            print(f"{time_str:>8} - LRS: {result['lrs_length']:3} chars - Speedup: {speedup_str:>6}")
+            
             successful_tests += 1
             
             cuda_results.append({
@@ -88,14 +215,42 @@ def main():
                 'time_seconds': result['time'],
                 'throughput_mb_s': file_size_mb / result['time'] if result['time'] > 0 else 0,
                 'throughput_chars_per_second': file_size / result['time'] if result['time'] > 0 else 0,
-                'lrs': result['lrs'],
+                'lrs_length': result['lrs_length'],
+                'lrs_string': result['lrs_string'],
+                'suffix_array_length': result['suffix_array_length'],
+                'execution_details': result['execution_details'],
+                'gpu_memory_used_mb': result['gpu_memory_used_mb'],
+                'gpu_utilization': result['gpu_utilization'],
+                'cuda_kernel_times': result['cuda_kernel_times'],
+                'speedup_vs_cpu': result['speedup_vs_cpu'],
                 'success': True,
                 'timestamp': datetime.now()
             })
         else:
-            print(f"FAILED")
+            print("FAILED")
             if result['error']:
                 print(f"      Error: {result['error'][:100]}")
+
+    # Calcola speedup rispetto alla versione sequenziale se disponibile
+    if cuda_results:
+        # Carica risultati sequenziali per confronto
+        sequential_times = {}
+        try:
+            if os.path.exists("results/benchmarks/sequential_results.csv"):
+                df_seq = pd.read_csv("results/benchmarks/sequential_results.csv")
+                for _, row in df_seq.iterrows():
+                    sequential_times[row['file']] = row['time_seconds']
+        except:
+            pass
+        
+        # Calcola speedup per ogni risultato CUDA
+        for result in cuda_results:
+            file_name = result['file']
+            if file_name in sequential_times and sequential_times[file_name] > 0:
+                calculated_speedup = sequential_times[file_name] / result['time_seconds']
+                # Usa il speedup calcolato se non è già presente nell'output
+                if result['speedup_vs_cpu'] == 0:
+                    result['speedup_vs_cpu'] = calculated_speedup
 
     # Salva risultati
     if cuda_results:
@@ -106,15 +261,36 @@ def main():
         
         df_cuda.to_csv(output_file, index=False)
         
+        # Calcola statistiche
+        total_time = df_cuda['time_seconds'].sum()
+        avg_throughput = df_cuda['throughput_mb_s'].mean()
+        avg_speedup = df_cuda['speedup_vs_cpu'].mean()
+        max_memory = df_cuda['gpu_memory_used_mb'].max()
+        
         print("\n" + "=" * 60)
         print("BENCHMARK CUDA COMPLETATO")
         print("=" * 60)
         print(f"Risultati salvati: {output_file}")
         print(f"Test completati: {successful_tests}/{len(cuda_files)}")
-        print(f"Tempo totale: {df_cuda['time_seconds'].sum():.1f}s")
+        print(f"Tempo totale: {total_time:.1f}s")
+        print(f"Throughput medio: {avg_throughput:.1f} MB/s")
+        print(f"Speedup medio vs CPU: {avg_speedup:.2f}x")
+        print(f"Memoria GPU massima utilizzata: {format_memory(max_memory)}")
         
-        if len(cuda_results) > 1:
-            print(f"Throughput medio: {df_cuda['throughput_mb_s'].mean():.1f} MB/s")
+        # Stampa tabella riassuntiva dettagliata
+        print("\nRIEPILOGO DETTAGLIATO CUDA:")
+        print("-" * 100)
+        print(f"{'File':25} {'Time':>8} {'LRS Len':>8} {'Speedup':>8} {'GPU Mem':>8} {'GPU Util':>8} {'LRS Preview':20}")
+        print("-" * 100)
+        
+        for result in cuda_results:
+            if result['success']:
+                lrs_preview = result['lrs_string'][:18] + "..." if len(result['lrs_string']) > 18 else result['lrs_string']
+                memory_str = format_memory(result['gpu_memory_used_mb'])
+                utilization_str = f"{result['gpu_utilization']:.1f}%" if result['gpu_utilization'] > 0 else "N/A"
+                speedup_str = f"{result['speedup_vs_cpu']:.2f}x" if result['speedup_vs_cpu'] > 0 else "N/A"
+                
+                print(f"{result['file']:25} {format_time(result['time_seconds']):>8} {result['lrs_length']:>8} {speedup_str:>8} {memory_str:>8} {utilization_str:>8} {lrs_preview:20}")
             
     else:
         print("\nNessun test CUDA completato!")
