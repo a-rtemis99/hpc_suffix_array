@@ -18,87 +18,86 @@ int compare_suffix_mpi(const void* a, const void* b) {
 
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int n = sa->n;
-
-    // Tutti i processi allocano il buffer ----
-    // Il root lo userà per i calcoli e l'invio, gli altri per ricevere i dati.
     Suffix* suffixes = (Suffix*)malloc(n * sizeof(Suffix));
     assert(suffixes != NULL);
 
-    // Solo il processo root INIZIALIZZA l'array con i dati di partenza.
-    if (rank == 0) {
-        for (int i = 0; i < n; i++) {
-            suffixes[i].index = i;
-            suffixes[i].rank[0] = sa->str[i];
-            suffixes[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
-        }
-    }
-    
-    // Tutti i processi hanno bisogno del rank_array
     int* rank_array = (int*)malloc(n * sizeof(int));
     assert(rank_array != NULL);
 
+    // Inizializzazione fatta da tutti i processi, è veloce.
+    for (int i = 0; i < n; i++) {
+        suffixes[i].index = i;
+        suffixes[i].rank[0] = sa->str[i];
+        suffixes[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
+    }
+
     int suffix_size_bytes = sizeof(Suffix);
 
-    // ---- Ciclo di Raddoppio Parallelo ----
+    // Buffer temporaneo per la fusione sul root
+    Suffix* gather_buffer = NULL;
+    if (rank == 0) {
+        gather_buffer = (Suffix*)malloc(n * sizeof(Suffix));
+        assert(gather_buffer != NULL);
+    }
+
     for (int k = 2; k < n; k *= 2) {
-        int* sendcounts_bytes = NULL;
+        // ---- 1. Suddivisione logica del lavoro, senza spostare dati ----
+        int chunk_size_structs = n / size;
+        int remainder = n % size;
+        int local_n_structs = chunk_size_structs + (rank < remainder ? 1 : 0);
+        int start_index = rank * chunk_size_structs + (rank < remainder ? rank : remainder);
+
+        // ---- 2. Ordinamento Locale ----
+        // Ogni processo ordina SOLO la sua fetta dell'array 'suffixes'
+        qsort(suffixes + start_index, local_n_structs, suffix_size_bytes, compare_suffix_mpi);
+        
+        // ---- 3. Raccolta dei Risultati (Gather) ----
+        // Prepariamo i conteggi e gli spostamenti per il Gatherv
+        int* recvcounts_bytes = NULL;
         int* displs_bytes = NULL;
-        int local_n_structs;
 
         if (rank == 0) {
-            sendcounts_bytes = malloc(size * sizeof(int));
+            recvcounts_bytes = malloc(size * sizeof(int));
             displs_bytes = malloc(size * sizeof(int));
-            
-            int chunk_size_structs = n / size;
-            int remainder = n % size;
             int current_displ_bytes = 0;
-
             for (int i = 0; i < size; i++) {
                 int structs_for_proc = chunk_size_structs + (i < remainder ? 1 : 0);
-                sendcounts_bytes[i] = structs_for_proc * suffix_size_bytes;
+                recvcounts_bytes[i] = structs_for_proc * suffix_size_bytes;
                 displs_bytes[i] = current_displ_bytes;
-                current_displ_bytes += sendcounts_bytes[i];
+                current_displ_bytes += recvcounts_bytes[i];
             }
         }
-
-        int local_n_bytes;
-        MPI_Scatter(sendcounts_bytes, 1, MPI_INT, &local_n_bytes, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
-        local_n_structs = local_n_bytes / suffix_size_bytes;
+        // Ogni processo invia la sua fetta ordinata al root
+        MPI_Gatherv(suffixes + start_index, local_n_structs * suffix_size_bytes, MPI_BYTE,
+                    gather_buffer, recvcounts_bytes, displs_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
         
-        Suffix* local_suffixes = (Suffix*)malloc(local_n_bytes);
-        assert(local_suffixes != NULL);
-
-        MPI_Scatterv(suffixes, sendcounts_bytes, displs_bytes, MPI_BYTE,
-                     local_suffixes, local_n_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
-        
-        qsort(local_suffixes, local_n_structs, suffix_size_bytes, compare_suffix_mpi);
-
-        MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
-                    suffixes, sendcounts_bytes, displs_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
-        
-        free(local_suffixes);
+        // ---- 4. Fusione (Merge) e Calcolo Rank (Tutto sul Root) ----
         if (rank == 0) {
-            free(sendcounts_bytes);
+            // Fusione: riordina l'array raccolto
+            qsort(gather_buffer, n, suffix_size_bytes, compare_suffix_mpi);
+
+            // Calcola il nuovo rank_array (solo il root lo fa)
+            int current_rank = 0;
+            rank_array[gather_buffer[0].index] = current_rank;
+            for (int i = 1; i < n; i++) {
+                if (gather_buffer[i].rank[0] != gather_buffer[i-1].rank[0] ||
+                    gather_buffer[i].rank[1] != gather_buffer[i-1].rank[1]) {
+                    current_rank++;
+                }
+                rank_array[gather_buffer[i].index] = current_rank;
+            }
+            
+            free(recvcounts_bytes);
             free(displs_bytes);
         }
 
-        if (rank == 0) {
-            qsort(suffixes, n, suffix_size_bytes, compare_suffix_mpi);
-        }
+        // ---- 5. OTTIMIZZAZIONE: Broadcast del solo rank_array ----
+        // Invece di 12*n byte, ora trasmettiamo solo 4*n byte.
+        MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
 
-        MPI_Bcast(suffixes, n * suffix_size_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
-
-        int current_rank = 0;
-        rank_array[suffixes[0].index] = current_rank;
-        for (int i = 1; i < n; i++) {
-            if (suffixes[i].rank[0] != suffixes[i-1].rank[0] ||
-                suffixes[i].rank[1] != suffixes[i-1].rank[1]) {
-                current_rank++;
-            }
-            rank_array[suffixes[i].index] = current_rank;
-        }
-
+        // ---- 6. Aggiornamento dei Rank (in parallelo) ----
+        // Tutti i processi aggiornano il proprio array 'suffixes' usando il nuovo rank_array
         for (int i = 0; i < n; i++) {
             int next_index = suffixes[i].index + k;
             suffixes[i].rank[0] = rank_array[suffixes[i].index];
@@ -110,10 +109,13 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
     }
     
+    // ---- Finalizzazione ----
     if (rank == 0) {
+        // L'ultimo qsort sul root ha già ordinato `gather_buffer` correttamente
         for (int i = 0; i < n; i++) {
-            sa->sa[i] = suffixes[i].index;
+            sa->sa[i] = gather_buffer[i].index;
         }
+        free(gather_buffer);
     }
 
     free(suffixes);
