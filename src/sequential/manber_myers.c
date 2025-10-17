@@ -6,8 +6,7 @@
 #include <string.h>
 #include <assert.h>
 
-// --- INIZIO CODICE PER RADIX SORT ---
-// Aggiungiamo 1 per mappare il rank -1 (carattere nullo) a 0.
+// Si aggiunge 1 per mappare il rank -1 (carattere nullo) a 0.
 static inline int get_rank_val(int r) {
     return r + 1;
 }
@@ -47,10 +46,8 @@ void radix_sort_suffixes_seq(Suffix* suffixes, int n, int max_rank_val) {
     
     free(temp_suffixes);
 }
-// --- FINE CODICE PER RADIX SORT ---
 
 
-// Funzione di creazione e distruzione rimangono invariate
 SuffixArray* create_suffix_array(const char* S, int n) {
     SuffixArray* sa = (SuffixArray*)malloc(sizeof(SuffixArray));
     if (!sa) return NULL;
@@ -98,7 +95,6 @@ void build_suffix_array(SuffixArray* sa) {
 
     // Ciclo di raddoppio
     for (int k = 2; k < 2 * n; k *= 2) {
-        // ---- OTTIMIZZAZIONE CHIAVE: USA RADIX SORT INVECE DI Q-SORT ----
         radix_sort_suffixes_seq(suffixes, n, max_rank_value + 1);
 
         // Ricalcola i rank
@@ -136,7 +132,6 @@ void build_suffix_array(SuffixArray* sa) {
     free(rank_array);
 }
 
-// Le funzioni per LCP, LRS e validazione rimangono invariate
 void build_lcp_array(SuffixArray* sa) {
     int n = sa->n;
     int* rank = (int*)malloc(n * sizeof(int));
@@ -180,7 +175,7 @@ char* find_longest_repeated_substring(SuffixArray* sa) {
     char* result = (char*)malloc((max_lcp + 1) * sizeof(char));
     if (!result) return NULL;
     
-    // Usiamo l'indice del suffisso per estrarre la sottostringa
+    // Si usa l'indice del suffisso per estrarre la sottostringa
     strncpy(result, sa->str + sa->sa[max_index], max_lcp);
     result[max_lcp] = '\0';
     return result;
