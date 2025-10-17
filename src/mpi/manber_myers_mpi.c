@@ -10,6 +10,17 @@
 // Prototipo della funzione sequenziale (che si trova in manber_myers.c)
 void build_suffix_array(SuffixArray* sa);
 
+// --- FUNZIONE MANCANTE AGGIUNTA QUI ---
+int compare_suffixes(const void* a, const void* b) {
+    Suffix* s1 = (Suffix*)a;
+    Suffix* s2 = (Suffix*)b;
+    if (s1->rank[0] == s2->rank[0]) {
+        return (s1->rank[1] < s2->rank[1]) ? -1 : 1;
+    }
+    return (s1->rank[0] < s2->rank[0]) ? -1 : 1;
+}
+// --- FINE FUNZIONE AGGIUNTA ---
+
 // Funzioni di supporto per Radix Sort
 static inline int get_rank_val(int r) { return r + 1; }
 
@@ -90,6 +101,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int max_rank_value = 256;
     
     for (int k = 2; k < 2 * n; k *= 2) {
+        // Ora il compilatore troverà la funzione 'compare_suffixes'
         qsort(local_suffixes, local_n, sizeof(Suffix), compare_suffixes);
         
         MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
@@ -126,17 +138,31 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         MPI_Bcast(&max_rank_value, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
         for (int i = 0; i < local_n; i++) {
-            int global_idx = local_suffixes[i].index; // Usa l'indice salvato
+            int global_idx = local_suffixes[i].index; 
             int next_index = global_idx + k;
             local_suffixes[i].rank[0] = rank_array[global_idx];
             local_suffixes[i].rank[1] = (next_index < n) ? rank_array[next_index] : -1;
         }
     }
     
+    // Assicurati che il rank 0 abbia l'array finale ordinato
     if (rank == 0) {
+        // Se il ciclo è terminato presto, all_suffixes potrebbe non essere l'ultima versione
+        // Quindi, facciamo un ultimo gather e sort
+        MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
+                    all_suffixes, recvcounts_bytes, displs_bytes, MPI_BYTE,
+                    0, MPI_COMM_WORLD);
+        radix_sort_suffixes(all_suffixes, n, max_rank_value + 1);
         for (int i = 0; i < n; i++) {
             sa->sa[i] = all_suffixes[i].index;
         }
+    } else {
+        MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
+                    NULL, NULL, NULL, MPI_BYTE,
+                    0, MPI_COMM_WORLD);
+    }
+    
+    if (rank == 0) {
         free(all_suffixes);
         free(recvcounts_bytes);
         free(displs_bytes);
