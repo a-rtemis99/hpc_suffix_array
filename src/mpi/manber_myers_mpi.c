@@ -22,7 +22,7 @@ static inline int get_rank_val(int r) {
 
 void counting_sort_radix(Suffix* in, Suffix* out, int n, int rank_pass, int max_rank) {
     int* count = (int*)calloc(max_rank + 1, sizeof(int));
-    if (!count) return;
+    assert(count != NULL);
 
     for (int i = 0; i < n; i++) {
         count[get_rank_val(in[i].rank[rank_pass])]++;
@@ -43,7 +43,7 @@ void counting_sort_radix(Suffix* in, Suffix* out, int n, int rank_pass, int max_
 
 void radix_sort_suffixes(Suffix* suffixes, int n, int max_rank_val) {
     Suffix* temp_suffixes = (Suffix*)malloc(n * sizeof(Suffix));
-    if(!temp_suffixes) return;
+    assert(temp_suffixes != NULL);
 
     counting_sort_radix(suffixes, temp_suffixes, n, 1, max_rank_val);
     counting_sort_radix(temp_suffixes, suffixes, n, 0, max_rank_val);
@@ -59,6 +59,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         suffixes_global = (Suffix*)malloc(n * sizeof(Suffix));
         for (int i = 0; i < n; i++) {
             suffixes_global[i].index = i;
+            // Rank iniziali basati sui caratteri
             suffixes_global[i].rank[0] = sa->str[i];
             suffixes_global[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
         }
@@ -86,20 +87,22 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int local_n_structs = local_n_bytes / suffix_size_bytes;
     Suffix* local_suffixes = (Suffix*)malloc(local_n_bytes > 0 ? local_n_bytes : 1);
     
-    // ---- MODIFICA CHIAVE QUI ----
-    // Il valore iniziale deve coprire tutti i possibili caratteri ASCII
+    // ---- FASE 1: Distribuzione Iniziale (UNA SOLA VOLTA) ----
+    MPI_Scatterv(suffixes_global, counts_bytes, displs_bytes, MPI_BYTE,
+                 local_suffixes, local_n_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
+
     int max_rank_value = 256; 
 
     for (int k = 2; k < 2 * n; k *= 2) {
-        MPI_Scatterv(suffixes_global, counts_bytes, displs_bytes, MPI_BYTE,
-                     local_suffixes, local_n_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
-        
+        // ---- FASE 2: Ordinamento Locale ----
         qsort(local_suffixes, local_n_structs, suffix_size_bytes, compare_suffixes);
         
+        // ---- FASE 3: Raccolta sul Root ----
         MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
                     suffixes_global, counts_bytes, displs_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
         
         if (rank == 0) {
+            // ---- FASE 4: Merge e Calcolo Rank (solo sul Root) ----
             radix_sort_suffixes(suffixes_global, n, max_rank_value + 1);
 
             int current_rank = 0;
@@ -114,24 +117,26 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
             max_rank_value = current_rank; 
         }
         
+        // ---- FASE 5: Broadcast delle sole informazioni essenziali ----
         MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&max_rank_value, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
         if (max_rank_value == n - 1) break;
         
-        if (rank == 0) {
-            for (int i = 0; i < n; i++) {
-                int next_index = suffixes_global[i].index + k;
-                suffixes_global[i].rank[0] = rank_array[suffixes_global[i].index];
-                if (next_index < n) {
-                    suffixes_global[i].rank[1] = rank_array[next_index];
-                } else {
-                    suffixes_global[i].rank[1] = -1;
-                }
+        // ---- FASE 6: Aggiornamento dei rank (IN PARALLELO!) ----
+        // Ogni processo aggiorna il proprio pezzo locale.
+        for (int i = 0; i < local_n_structs; i++) {
+            int next_index = local_suffixes[i].index + k;
+            local_suffixes[i].rank[0] = rank_array[local_suffixes[i].index];
+            if (next_index < n) {
+                local_suffixes[i].rank[1] = rank_array[next_index];
+            } else {
+                local_suffixes[i].rank[1] = -1;
             }
         }
     }
     
+    // L'ultimo Gatherv ha già portato il risultato finale sul root
     if (rank == 0) {
         for (int i = 0; i < n; i++) {
             sa->sa[i] = suffixes_global[i].index;
