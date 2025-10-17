@@ -73,7 +73,7 @@ def parse_output(output):
 
 def run_benchmark(input_file):
     """Esegue il benchmark per un singolo file"""
-    cmd = ["./bin/sequential_suffix_array", input_file]
+    cmd = ["./bin/main_sequential", input_file]
     
     start_time = time.time()
     try:
