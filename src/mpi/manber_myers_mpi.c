@@ -7,7 +7,6 @@
 #include <assert.h>
 #include "../common/suffix_array.h"
 
-// --- FUNZIONE MANCANTE AGGIUNTA QUI ---
 int compare_suffixes(const void* a, const void* b) {
     Suffix* s1 = (Suffix*)a;
     Suffix* s2 = (Suffix*)b;
@@ -16,10 +15,7 @@ int compare_suffixes(const void* a, const void* b) {
     }
     return (s1->rank[0] < s2->rank[0]) ? -1 : 1;
 }
-// --- FINE FUNZIONE AGGIUNTA ---
 
-
-// --- INIZIO CODICE PER RADIX SORT SEQUENZIALE (OTTIMIZZATO) ---
 static inline int get_rank_val(int r) {
     return r + 1;
 }
@@ -54,8 +50,6 @@ void radix_sort_suffixes(Suffix* suffixes, int n, int max_rank_val) {
     
     free(temp_suffixes);
 }
-// --- FINE CODICE PER RADIX SORT SEQUENZIALE ---
-
 
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int n = sa->n;
@@ -92,13 +86,14 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int local_n_structs = local_n_bytes / suffix_size_bytes;
     Suffix* local_suffixes = (Suffix*)malloc(local_n_bytes > 0 ? local_n_bytes : 1);
     
-    int max_rank_value = n; 
+    // ---- MODIFICA CHIAVE QUI ----
+    // Il valore iniziale deve coprire tutti i possibili caratteri ASCII
+    int max_rank_value = 256; 
 
     for (int k = 2; k < 2 * n; k *= 2) {
         MPI_Scatterv(suffixes_global, counts_bytes, displs_bytes, MPI_BYTE,
                      local_suffixes, local_n_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
         
-        // Ora il compilatore troverà la funzione 'compare_suffixes'
         qsort(local_suffixes, local_n_structs, suffix_size_bytes, compare_suffixes);
         
         MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
