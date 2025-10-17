@@ -24,6 +24,7 @@ int compare_suffixes(const void* a, const void* b) {
 // Funzione principale MPI - Sample Sort (PSRS)
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int n = sa->n;
+    int local_n_bytes; // <-- CORREZIONE: Dichiarata qui all'inizio
 
     // STRATEGIA IBRIDA
     if (n < 5000000) { // Soglia ~5MB
@@ -38,8 +39,8 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int base_chunk = n / size;
     int remainder = n % size;
     int local_n = base_chunk + (rank < remainder ? 1 : 0);
-    int displ = rank * base_chunk + (rank < remainder ? rank : remainder);
-    
+    // int displ = ... <-- CORREZIONE: rimossa variabile inutilizzata
+
     Suffix* local_suffixes = (Suffix*)malloc(local_n * sizeof(Suffix));
     assert(local_suffixes);
     
@@ -54,8 +55,8 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         int* sendcounts = (int*)malloc(size * sizeof(int));
         int* displs_scatter = (int*)malloc(size * sizeof(int));
         for(int i=0; i<size; ++i) {
-            sendcounts[i] = (base_chunk + (i < remainder ? 1 : 0));
-            displs_scatter[i] = (i * base_chunk + (i < remainder ? i : remainder));
+            sendcounts[i] = (base_chunk + (i < remainder ? 1 : 0)) * sizeof(Suffix);
+            displs_scatter[i] = (i * base_chunk + (i < remainder ? i : remainder)) * sizeof(Suffix);
         }
         
         MPI_Scatterv(all_suffixes_temp, sendcounts, displs_scatter, MPI_BYTE, local_suffixes, local_n * sizeof(Suffix), MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -126,12 +127,18 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
         
         // Converte conteggi e spostamenti da #structs a #bytes per MPI
+        int* send_counts_bytes = (int*)malloc(size * sizeof(int));
+        int* send_displs_bytes = (int*)malloc(size * sizeof(int));
+        int* recv_counts_bytes = (int*)malloc(size * sizeof(int));
+        int* recv_displs_bytes = (int*)malloc(size * sizeof(int));
         for(int i=0; i<size; ++i) {
-            send_counts[i] *= sizeof(Suffix); send_displs[i] *= sizeof(Suffix);
-            recv_counts[i] *= sizeof(Suffix); recv_displs[i] *= sizeof(Suffix);
+            send_counts_bytes[i] = send_counts[i] * sizeof(Suffix);
+            send_displs_bytes[i] = send_displs[i] * sizeof(Suffix);
+            recv_counts_bytes[i] = recv_counts[i] * sizeof(Suffix);
+            recv_displs_bytes[i] = recv_displs[i] * sizeof(Suffix);
         }
 
-        MPI_Alltoallv(local_suffixes, send_counts, send_displs, MPI_BYTE, received_suffixes, recv_counts, recv_displs, MPI_BYTE, MPI_COMM_WORLD);
+        MPI_Alltoallv(local_suffixes, send_counts_bytes, send_displs_bytes, MPI_BYTE, received_suffixes, recv_counts_bytes, recv_displs_bytes, MPI_BYTE, MPI_COMM_WORLD);
         
         free(local_suffixes);
         local_suffixes = received_suffixes;
@@ -162,12 +169,10 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
             rank_array[local_suffixes[i].index] = rank_offset + current_local_rank -1;
         }
 
-        // Condividi il rank massimo e l'intero array dei rank
         int max_rank_value;
         int last_rank = (local_n > 0) ? rank_array[local_suffixes[local_n-1].index] : -1;
         MPI_Allreduce(&last_rank, &max_rank_value, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         
-        // Allgather per ricostruire l'intero rank_array su ogni processo
         int* all_local_n_structs = (int*)malloc(size * sizeof(int));
         MPI_Allgather(&local_n, 1, MPI_INT, all_local_n_structs, 1, MPI_INT, MPI_COMM_WORLD);
         
@@ -192,11 +197,12 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
             rank_array[all_indices[i]] = all_ranks[i];
         }
 
-        if(max_rank_value == n-1) { // Terminazione
-             free(pivots); free(send_counts); free(recv_counts); free(send_displs); free(recv_displs);
-             free(local_rank_updates); free(all_local_n_structs); free(displs_gather);
-             free(temp_indices); free(temp_ranks); free(all_indices); free(all_ranks);
-             break;
+        if(max_rank_value == n-1) {
+            free(pivots); free(send_counts); free(recv_counts); free(send_displs); free(recv_displs);
+            free(send_counts_bytes); free(send_displs_bytes); free(recv_counts_bytes); free(recv_displs_bytes);
+            free(local_rank_updates); free(all_local_n_structs); free(displs_gather);
+            free(temp_indices); free(temp_ranks); free(all_indices); free(all_ranks);
+            break;
         }
 
         // 7. AGGIORNAMENTO PARALLELO per il prossimo ciclo
@@ -208,6 +214,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
 
         free(pivots); free(send_counts); free(recv_counts); free(send_displs); free(recv_displs);
+        free(send_counts_bytes); free(send_displs_bytes); free(recv_counts_bytes); free(recv_displs_bytes);
         free(local_rank_updates); free(all_local_n_structs); free(displs_gather);
         free(temp_indices); free(temp_ranks); free(all_indices); free(all_ranks);
     }
@@ -226,16 +233,20 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     }
     
     // Converte conteggi e spostamenti in bytes
+    int* recvcounts_final_bytes = NULL;
+    int* displs_final_bytes = NULL;
     if(rank==0) {
+        recvcounts_final_bytes = (int*)malloc(size*sizeof(int));
+        displs_final_bytes = (int*)malloc(size*sizeof(int));
         for(int i=0; i<size; ++i) {
-            all_local_n_final[i] *= sizeof(Suffix);
-            displs_final[i] *= sizeof(Suffix);
+            recvcounts_final_bytes[i] = all_local_n_final[i] * sizeof(Suffix);
+            displs_final_bytes[i] = displs_final[i] * sizeof(Suffix);
         }
     }
-    local_n_bytes = local_n * sizeof(Suffix);
+    local_n_bytes = local_n * sizeof(Suffix); // <-- CORREZIONE: Calcola il valore
 
     MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
-                final_suffixes, all_local_n_final, displs_final, MPI_BYTE, 0, MPI_COMM_WORLD);
+                final_suffixes, recvcounts_final_bytes, displs_final_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
     
     if (rank == 0) {
         for(int i=0; i<n; ++i) {
@@ -243,6 +254,8 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
         free(final_suffixes);
         free(displs_final);
+        free(recvcounts_final_bytes);
+        free(displs_final_bytes);
     }
     
     free(all_local_n_final);
