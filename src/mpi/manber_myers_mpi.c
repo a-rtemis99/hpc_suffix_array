@@ -7,19 +7,29 @@
 #include <assert.h>
 #include "../common/suffix_array.h"
 
-// --- INIZIO CODICE PER RADIX SORT SEQUENZIALE ---
-// Funzione di utilità: ottiene il rank specificato (0 o 1)
-static inline int get_rank(const Suffix* s, int r) {
-    // Aggiungiamo 1 per gestire il rank -1 come 0 (carattere nullo)
-    return (s->rank[r] + 1);
+// --- FUNZIONE MANCANTE AGGIUNTA QUI ---
+int compare_suffixes(const void* a, const void* b) {
+    Suffix* s1 = (Suffix*)a;
+    Suffix* s2 = (Suffix*)b;
+    if (s1->rank[0] == s2->rank[0]) {
+        return (s1->rank[1] < s2->rank[1]) ? -1 : 1;
+    }
+    return (s1->rank[0] < s2->rank[0]) ? -1 : 1;
+}
+// --- FINE FUNZIONE AGGIUNTA ---
+
+
+// --- INIZIO CODICE PER RADIX SORT SEQUENZIALE (OTTIMIZZATO) ---
+static inline int get_rank_val(int r) {
+    return r + 1;
 }
 
-// Counting sort stabile per i rank (usato da Radix Sort)
 void counting_sort_radix(Suffix* in, Suffix* out, int n, int rank_pass, int max_rank) {
     int* count = (int*)calloc(max_rank + 1, sizeof(int));
-    
+    if (!count) return;
+
     for (int i = 0; i < n; i++) {
-        count[get_rank(&in[i], rank_pass)]++;
+        count[get_rank_val(in[i].rank[rank_pass])]++;
     }
     
     for (int i = 1; i <= max_rank; i++) {
@@ -27,7 +37,7 @@ void counting_sort_radix(Suffix* in, Suffix* out, int n, int rank_pass, int max_
     }
     
     for (int i = n - 1; i >= 0; i--) {
-        int r_val = get_rank(&in[i], rank_pass);
+        int r_val = get_rank_val(in[i].rank[rank_pass]);
         out[count[r_val] - 1] = in[i];
         count[r_val]--;
     }
@@ -35,17 +45,12 @@ void counting_sort_radix(Suffix* in, Suffix* out, int n, int rank_pass, int max_
     free(count);
 }
 
-// Radix sort sequenziale per le coppie di rank
-void radix_sort_suffixes(Suffix* suffixes, int n) {
+void radix_sort_suffixes(Suffix* suffixes, int n, int max_rank_val) {
     Suffix* temp_suffixes = (Suffix*)malloc(n * sizeof(Suffix));
-    // Il rango massimo è n (da -1 a n-1, quindi n+1 valori distinti)
-    int max_rank = n + 1;
+    if(!temp_suffixes) return;
 
-    // Ordina per il secondo rank (meno significativo)
-    counting_sort_radix(suffixes, temp_suffixes, n, 1, max_rank);
-    
-    // Ordina per il primo rank (più significativo) in modo stabile
-    counting_sort_radix(temp_suffixes, suffixes, n, 0, max_rank);
+    counting_sort_radix(suffixes, temp_suffixes, n, 1, max_rank_val);
+    counting_sort_radix(temp_suffixes, suffixes, n, 0, max_rank_val);
     
     free(temp_suffixes);
 }
@@ -54,14 +59,14 @@ void radix_sort_suffixes(Suffix* suffixes, int n) {
 
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int n = sa->n;
-    Suffix* suffixes = NULL;
+    Suffix* suffixes_global = NULL; 
 
     if (rank == 0) {
-        suffixes = (Suffix*)malloc(n * sizeof(Suffix));
+        suffixes_global = (Suffix*)malloc(n * sizeof(Suffix));
         for (int i = 0; i < n; i++) {
-            suffixes[i].index = i;
-            suffixes[i].rank[0] = sa->str[i];
-            suffixes[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
+            suffixes_global[i].index = i;
+            suffixes_global[i].rank[0] = sa->str[i];
+            suffixes_global[i].rank[1] = (i + 1 < n) ? sa->str[i + 1] : -1;
         }
     }
 
@@ -70,8 +75,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
 
     int suffix_size_bytes = sizeof(Suffix);
     
-    // Calcolo della suddivisione
-    int* sendcounts_bytes = (int*)malloc(size * sizeof(int));
+    int* counts_bytes = (int*)malloc(size * sizeof(int));
     int* displs_bytes = (int*)malloc(size * sizeof(int));
     
     int chunk_size_structs = n / size;
@@ -79,54 +83,55 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int current_displ_bytes = 0;
     for (int i = 0; i < size; i++) {
         int structs_for_proc = chunk_size_structs + (i < remainder ? 1 : 0);
-        sendcounts_bytes[i] = structs_for_proc * suffix_size_bytes;
+        counts_bytes[i] = structs_for_proc * suffix_size_bytes;
         displs_bytes[i] = current_displ_bytes;
-        current_displ_bytes += sendcounts_bytes[i];
+        current_displ_bytes += counts_bytes[i];
     }
     
-    int local_n_bytes = sendcounts_bytes[rank];
+    int local_n_bytes = counts_bytes[rank];
+    int local_n_structs = local_n_bytes / suffix_size_bytes;
     Suffix* local_suffixes = (Suffix*)malloc(local_n_bytes > 0 ? local_n_bytes : 1);
     
-    for (int k = 2; k < n; k *= 2) {
-        // 1. Distribuzione dei dati
-        MPI_Scatterv(suffixes, sendcounts_bytes, displs_bytes, MPI_BYTE,
+    int max_rank_value = n; 
+
+    for (int k = 2; k < 2 * n; k *= 2) {
+        MPI_Scatterv(suffixes_global, counts_bytes, displs_bytes, MPI_BYTE,
                      local_suffixes, local_n_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
         
-        // 2. Ordinamento Locale (qsort è ottimo per pezzi piccoli)
-        int local_n_structs = local_n_bytes / suffix_size_bytes;
-        qsort(local_suffixes, local_n_structs, suffix_size_bytes, compare_suffix_mpi);
+        // Ora il compilatore troverà la funzione 'compare_suffixes'
+        qsort(local_suffixes, local_n_structs, suffix_size_bytes, compare_suffixes);
         
-        // 3. Raccolta sul Root
         MPI_Gatherv(local_suffixes, local_n_bytes, MPI_BYTE,
-                    suffixes, sendcounts_bytes, displs_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
+                    suffixes_global, counts_bytes, displs_bytes, MPI_BYTE, 0, MPI_COMM_WORLD);
         
-        // 4. Lavoro solo sul Root: USA RADIX SORT (O(N)) INVECE DI Q-SORT (O(N log N))
         if (rank == 0) {
-            radix_sort_suffixes(suffixes, n); // <-- OTTIMIZZAZIONE CHIAVE!
+            radix_sort_suffixes(suffixes_global, n, max_rank_value + 1);
 
             int current_rank = 0;
-            rank_array[suffixes[0].index] = current_rank;
+            rank_array[suffixes_global[0].index] = current_rank;
             for (int i = 1; i < n; i++) {
-                if (suffixes[i].rank[0] != suffixes[i-1].rank[0] ||
-                    suffixes[i].rank[1] != suffixes[i-1].rank[1]) {
+                if (suffixes_global[i].rank[0] != suffixes_global[i-1].rank[0] ||
+                    suffixes_global[i].rank[1] != suffixes_global[i-1].rank[1]) {
                     current_rank++;
                 }
-                rank_array[suffixes[i].index] = current_rank;
+                rank_array[suffixes_global[i].index] = current_rank;
             }
+            max_rank_value = current_rank; 
         }
         
-        // 5. Broadcast del solo rank_array
         MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&max_rank_value, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
-        // 6. Aggiornamento per il prossimo ciclo sul root
+        if (max_rank_value == n - 1) break;
+        
         if (rank == 0) {
             for (int i = 0; i < n; i++) {
-                int next_index = suffixes[i].index + k;
-                suffixes[i].rank[0] = rank_array[suffixes[i].index];
+                int next_index = suffixes_global[i].index + k;
+                suffixes_global[i].rank[0] = rank_array[suffixes_global[i].index];
                 if (next_index < n) {
-                    suffixes[i].rank[1] = rank_array[next_index];
+                    suffixes_global[i].rank[1] = rank_array[next_index];
                 } else {
-                    suffixes[i].rank[1] = -1;
+                    suffixes_global[i].rank[1] = -1;
                 }
             }
         }
@@ -134,13 +139,13 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     
     if (rank == 0) {
         for (int i = 0; i < n; i++) {
-            sa->sa[i] = suffixes[i].index;
+            sa->sa[i] = suffixes_global[i].index;
         }
     }
 
-    if(rank == 0) free(suffixes);
+    if(rank == 0) free(suffixes_global);
     free(rank_array);
-    free(sendcounts_bytes);
+    free(counts_bytes);
     free(displs_bytes);
     free(local_suffixes);
 }
