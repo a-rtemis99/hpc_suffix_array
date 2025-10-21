@@ -1,11 +1,9 @@
-// src/mpi/manber_myers_mpi.c
-
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "../common/suffix_array.h"
+#include "../common/suffix_array.h" 
 
 // Prototipo della funzione sequenziale (che si trova in manber_myers.c)
 void build_suffix_array(SuffixArray* sa);
@@ -32,7 +30,8 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
          // Assicurati che tutti i processi abbiano sa->sa allocato per ricevere il Bcast
         if(rank != 0) {
-            if (sa->sa == NULL) { // Solo se non già allocato
+            // Solo se sa->sa non è già allocato (potrebbe esserlo da create_suffix_array)
+            if (sa->sa == NULL) {
                  sa->sa = (int*)malloc(n * sizeof(int));
                  assert(sa->sa != NULL);
             }
@@ -46,9 +45,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int blocklengths[2] = {1, 2};
     MPI_Aint displacements[2];
     MPI_Datatype types[2] = {MPI_INT, MPI_INT};
-    // --- CORREZIONE: Inizializza s_temp per silenziare il warning ---
-    Suffix s_temp = {0, {0, 0}}; // Inizializzazione a zero
-    // -----------------------------------------------------------------
+    Suffix s_temp;
     MPI_Get_address(&s_temp.index, &displacements[0]);
     MPI_Get_address(&s_temp.rank[0], &displacements[1]);
     displacements[1] = displacements[1] - displacements[0]; displacements[0] = 0;
@@ -62,10 +59,6 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
 
     Suffix* local_suffixes = (Suffix*)malloc(local_n * sizeof(Suffix));
     assert(local_suffixes != NULL);
-
-    // *** CORREZIONE: Alloca rank_array su TUTTI i processi all'inizio ***
-    int* rank_array = (int*)malloc(n * sizeof(int));
-    assert(rank_array != NULL);
 
     // Distribuzione iniziale
     if (rank == 0) {
@@ -96,10 +89,10 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
                      local_suffixes, local_n, suffix_mpi_type, 0, MPI_COMM_WORLD);
     }
 
-    // Buffer globali allocati solo sul master (rank 0)
-    Suffix* all_suffixes = NULL;
-    int* recvcounts_structs = NULL;
-    int* displs_structs = NULL;
+    int* rank_array = (int*)malloc(n * sizeof(int)); assert(rank_array != NULL);
+    Suffix* all_suffixes = NULL; // Buffer globale solo sul master
+    int* recvcounts_structs = NULL; // Conteggi per Gatherv
+    int* displs_structs = NULL; // Spostamenti per Gatherv
     if (rank == 0) {
         all_suffixes = (Suffix*)malloc(n * sizeof(Suffix)); assert(all_suffixes != NULL);
         recvcounts_structs = (int*)malloc(size * sizeof(int)); assert(recvcounts_structs != NULL);
@@ -120,44 +113,56 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int k; // Dichiarata fuori dal ciclo per visibilità dopo il break
 
     // Ciclo principale di Manber-Myers
-    for (k = 4; k < 2 * n; k *= 2) { // k parte da 4
-        // 1. Ordinamento Locale
+    for (k = 4; k < 2 * n; k *= 2) { // k parte da 4, corrisponde a ordinare per 2 caratteri
+        // 1. Ordinamento Locale (con qsort)
         qsort(local_suffixes, local_n, sizeof(Suffix), compare_suffixes);
 
-        // 2. Raccolta sul Root
+        // 2. Raccolta sul Root (usando il tipo MPI custom)
         MPI_Gatherv(local_suffixes, local_n, suffix_mpi_type,
                     all_suffixes, recvcounts_structs, displs_structs, suffix_mpi_type,
                     0, MPI_COMM_WORLD);
 
         int terminate = 0;
         if (rank == 0) {
-            // 3. Merge Globale sul Master
+            // 3. Merge Globale sul Master usando qsort
             qsort(all_suffixes, n, sizeof(Suffix), compare_suffixes);
 
-            // 4. Calcolo dei nuovi Rank sul Master (sovrascrive rank_array)
+            // 4. Calcolo dei nuovi Rank sul Master
             int current_rank = 0;
-            // Non serve più temp_rank_map, scriviamo direttamente su rank_array
-            rank_array[all_suffixes[0].index] = current_rank;
+            // Si usa un array temporaneo per i nuovi rank per evitare conflitti
+            int* temp_rank_map = (int*)malloc(n * sizeof(int));
+            assert(temp_rank_map != NULL);
+
+            temp_rank_map[all_suffixes[0].index] = current_rank;
             for (int i = 1; i < n; i++) {
                 if (compare_suffixes(&all_suffixes[i], &all_suffixes[i-1]) != 0) {
                     current_rank++;
                 }
-                rank_array[all_suffixes[i].index] = current_rank;
+                temp_rank_map[all_suffixes[i].index] = current_rank;
             }
+            // Copia i rank calcolati nell'array principale rank_array
+            memcpy(rank_array, temp_rank_map, n * sizeof(int));
+            free(temp_rank_map);
 
-            if (current_rank == n - 1) terminate = 1;
+            // Controlla la condizione di terminazione
+            if (current_rank == n - 1) {
+                terminate = 1;
+            }
         }
 
-        // 5. Broadcast terminazione
+        // 5. Broadcast della flag di terminazione
         MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        if (terminate) break;
+        if (terminate) {
+            break; // Esce dal ciclo se l'ordinamento è completo
+        }
 
-        // 6. Broadcast rank_array (ora tutti lo ricevono nel loro buffer già allocato)
+        // 6. Broadcast del rank_array aggiornato
         MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
 
-        // 7. Aggiornamento Locale dei Rank
+        // 7. Aggiornamento Locale dei Rank per la prossima iterazione (in parallelo)
         for (int i = 0; i < local_n; i++) {
             int global_idx = local_suffixes[i].index;
+            // k rappresenta la lunghezza *dopo* l'ordinamento, quindi il passo precedente era k/2
             int next_index = global_idx + k / 2;
             local_suffixes[i].rank[0] = rank_array[global_idx];
             local_suffixes[i].rank[1] = (next_index < n) ? rank_array[next_index] : -1;
@@ -166,6 +171,8 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
 
     // Finalizzazione: il Rank 0 ha già l'array finale all_suffixes ordinato
     if (rank == 0) {
+        // L'array all_suffixes contiene il risultato dell'ultimo qsort nel ciclo
+        // o del qsort prima del break se terminate=1
         for (int i = 0; i < n; i++) {
             sa->sa[i] = all_suffixes[i].index;
         }
@@ -186,6 +193,5 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         free(displs_structs);
     }
     free(local_suffixes);
-    // Libera rank_array su TUTTI i processi alla fine
     free(rank_array);
 }
