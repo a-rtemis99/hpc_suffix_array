@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Generatore di dataset di grandi dimensioni per testing Suffix Array
 (Versione modificata per generare solo i file richiesti dalla traccia)
@@ -8,6 +7,10 @@ import random
 import string
 import hashlib
 from datetime import datetime
+import random
+
+
+random.seed(42)
 
 def generate_random_string(length):
     """Genera una stringa casuale di lunghezza specificata"""
