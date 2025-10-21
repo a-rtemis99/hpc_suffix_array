@@ -1,8 +1,10 @@
+// src/mpi/main_mpi.c
+
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h> 
+#include <assert.h> // Aggiunto per assert
 #include "../common/suffix_array.h"
 #include "../common/utils.h"
 
@@ -16,7 +18,7 @@ int main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    char* input_str = NULL;
+    char* input_str_original = NULL; // Rinominato per chiarezza
     long n = 0;
     double start_time, end_time, mid_time;
 
@@ -24,11 +26,11 @@ int main(int argc, char* argv[]) {
     if (rank == 0) {
         if (argc != 2) {
             fprintf(stderr, "Usage: mpirun -np <num_procs> %s <input_file>\n", argv[0]);
-            MPI_Abort(MPI_COMM_WORLD, 1); // Usa MPI_Abort per terminare tutti i processi
+            MPI_Abort(MPI_COMM_WORLD, 1);
         }
         printf("Reading from file: %s\n", argv[1]);
-        input_str = read_file(argv[1], &n);
-        if (!input_str) {
+        input_str_original = read_file(argv[1], &n); // Salva in variabile temporanea
+        if (!input_str_original) {
             fprintf(stderr, "Error: Failed to read input file\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
@@ -36,20 +38,20 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Trasmissione (Broadcast) dei dati a tutti i processi ----
-    start_time = MPI_Wtime(); // Inizia a misurare il tempo dopo la lettura file
+    start_time = MPI_Wtime();
 
     // 1. Trasmetti la lunghezza della stringa
     MPI_Bcast(&n, 1, MPI_LONG, 0, MPI_COMM_WORLD);
 
-    // 2. Alloca memoria per la stringa su tutti i processi (anche il root la rialloca per semplicità)
-    // Se rank 0 ha letto da file, input_str punta ai dati letti.
-    // Gli altri processi hanno input_str = NULL.
+    // 2. Alloca memoria per il buffer di ricezione su tutti i processi
     char* str_buffer = (char*)malloc((n + 1) * sizeof(char));
     assert(str_buffer != NULL);
     if (rank == 0) {
-        strncpy(str_buffer, input_str, n + 1); // Copia la stringa letta nel buffer da trasmettere
-        free(input_str); // Libera la memoria originale letta da file
-        input_str = NULL; // Per evitare double free dopo
+        // Il root copia la stringa letta nel buffer da trasmettere
+        strncpy(str_buffer, input_str_original, n + 1);
+        // Libera la memoria originale letta da file SOLO DOPO LA COPIA
+        free(input_str_original);
+        input_str_original = NULL; // Per sicurezza
     }
 
     // 3. Trasmetti la stringa usando str_buffer
@@ -63,8 +65,8 @@ int main(int argc, char* argv[]) {
         free(str_buffer); // Libera il buffer prima di abortire
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    // Nota: create_suffix_array fa una copia di str_buffer in sa->str.
-    // Quindi possiamo liberare str_buffer dopo aver creato sa.
+    // create_suffix_array fa una copia interna di str_buffer in sa->str.
+    // Possiamo liberare str_buffer qui perché non serve più.
     free(str_buffer);
     str_buffer = NULL;
 
@@ -106,12 +108,12 @@ int main(int argc, char* argv[]) {
         printf("TOTAL_TIME:%.6f\n", total_execution_time);
         printf("--- END_STRUCTURED_RESULTS ---\n");
 
-        free(lrs);
+        free(lrs); // Libera la stringa LRS solo sul root
     }
 
     // ---- Cleanup ----
     // destroy_suffix_array libera sa->str (la copia), sa->sa, sa->lcp, e sa stesso.
-    // È chiamata da tutti i processi perché tutti hanno creato la struttura 'sa'.
+    // Deve essere chiamata da TUTTI i processi.
     destroy_suffix_array(sa);
 
     MPI_Finalize();

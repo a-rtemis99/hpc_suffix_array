@@ -1,192 +1,121 @@
+// src/mpi/main_mpi.c
+
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
+#include <assert.h> // Aggiunto per assert
 #include "../common/suffix_array.h"
+#include "../common/utils.h"
 
-// Prototipo della funzione sequenziale (che si trova in manber_myers.c)
-void build_suffix_array(SuffixArray* sa);
+// Prototipo della funzione parallela definita in manber_myers_mpi.c
+void build_suffix_array_mpi(SuffixArray* sa, int rank, int size);
 
-// Funzione di confronto per qsort
-int compare_suffixes(const void* a, const void* b) {
-    Suffix* s1 = (Suffix*)a;
-    Suffix* s2 = (Suffix*)b;
-    if (s1->rank[0] == s2->rank[0]) {
-        if (s1->rank[1] == s2->rank[1]) return 0;
-        return (s1->rank[1] < s2->rank[1]) ? -1 : 1;
-    }
-    return (s1->rank[0] < s2->rank[0]) ? -1 : 1;
-}
+int main(int argc, char* argv[]) {
+    // ---- Inizializzazione MPI ----
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-// Funzione principale MPI - Master/Worker con qsort sul master e inizializzazione parallela
-void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
-    int n = sa->n;
+    char* input_str_original = NULL; // Rinominato per chiarezza
+    long n = 0;
+    double start_time, end_time, mid_time;
 
-    // STRATEGIA IBRIDA: per file piccoli (< 5MB), esegui sequenziale
-    if (n < 5000000) {
-        if (rank == 0) {
-            build_suffix_array(sa); // Usa la versione sequenziale con qsort
-        }
-        if(rank != 0) {
-            // Solo se sa->sa non è già allocato (potrebbe esserlo da create_suffix_array)
-            if (sa->sa == NULL) {
-                 sa->sa = (int*)malloc(n * sizeof(int));
-                 assert(sa->sa != NULL);
-            }
-        }
-        MPI_Bcast(sa->sa, n, MPI_INT, 0, MPI_COMM_WORLD);
-        return;
-    }
-
-    // Creazione MPI Datatype per Suffix
-    MPI_Datatype suffix_mpi_type;
-    int blocklengths[2] = {1, 2};
-    MPI_Aint displacements[2];
-    MPI_Datatype types[2] = {MPI_INT, MPI_INT};
-    Suffix s_temp;
-    MPI_Get_address(&s_temp.index, &displacements[0]);
-    MPI_Get_address(&s_temp.rank[0], &displacements[1]);
-    displacements[1] = displacements[1] - displacements[0]; displacements[0] = 0;
-    MPI_Type_create_struct(2, blocklengths, displacements, types, &suffix_mpi_type);
-    MPI_Type_commit(&suffix_mpi_type);
-
-    // Calcolo distribuzione
-    int base_chunk = n / size;
-    int remainder = n % size;
-    int local_n = base_chunk + (rank < remainder ? 1 : 0); // Num struct locali
-    int displ = rank * base_chunk + (rank < remainder ? rank : remainder); // Offset di partenza per questo processo
-
-    Suffix* local_suffixes = (Suffix*)malloc(local_n * sizeof(Suffix));
-    assert(local_suffixes != NULL);
-
-    // Inizializzazione PARALLELA dei suffissi locali
-    for (int i = 0; i < local_n; i++) {
-        int global_idx = displ + i;
-        local_suffixes[i].index = global_idx;
-        local_suffixes[i].rank[0] = (unsigned char)sa->str[global_idx];
-        local_suffixes[i].rank[1] = (global_idx + 1 < n) ? (unsigned char)sa->str[global_idx + 1] : -1;
-    }
-
-    // rank_array completo allocato solo quando serve (prima del Bcast)
-    int* rank_array = NULL;
-
-    // Buffer globali allocati solo sul master (rank 0)
-    Suffix* all_suffixes = NULL;
-    int* recvcounts_structs = NULL;
-    int* displs_structs = NULL;
+    // ---- Il processo Root (rank 0) gestisce l'input ----
     if (rank == 0) {
-        all_suffixes = (Suffix*)malloc(n * sizeof(Suffix)); assert(all_suffixes != NULL);
-        recvcounts_structs = (int*)malloc(size * sizeof(int)); assert(recvcounts_structs != NULL);
-        displs_structs = (int*)malloc(size * sizeof(int)); assert(displs_structs != NULL);
+        if (argc != 2) {
+            fprintf(stderr, "Usage: mpirun -np <num_procs> %s <input_file>\n", argv[0]);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        printf("Reading from file: %s\n", argv[1]);
+        input_str_original = read_file(argv[1], &n); // Salva in variabile temporanea
+        if (!input_str_original) {
+            fprintf(stderr, "Error: Failed to read input file\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        printf("File read successfully. String length: %ld\n", n);
     }
 
-    // Raccoglie il numero di struct locali (local_n) da ogni processo sul master
-    // Questa chiamata è necessaria per calcolare recvcounts_structs e displs_structs per il Gatherv successivo
-    MPI_Gather(&local_n, 1, MPI_INT, recvcounts_structs, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    // ---- Trasmissione (Broadcast) dei dati a tutti i processi ----
+    start_time = MPI_Wtime();
 
-    // Il master calcola gli spostamenti per Gatherv (in numero di struct)
+    // 1. Trasmetti la lunghezza della stringa
+    MPI_Bcast(&n, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+
+    // 2. Alloca memoria per il buffer di ricezione su tutti i processi
+    char* str_buffer = (char*)malloc((n + 1) * sizeof(char));
+    assert(str_buffer != NULL);
     if (rank == 0) {
-        displs_structs[0] = 0;
-        for (int i = 1; i < size; i++) {
-            displs_structs[i] = displs_structs[i-1] + recvcounts_structs[i-1];
-        }
+        // Il root copia la stringa letta nel buffer da trasmettere
+        strncpy(str_buffer, input_str_original, n + 1);
+        // Libera la memoria originale letta da file SOLO DOPO LA COPIA
+        free(input_str_original);
+        input_str_original = NULL; // Per sicurezza
     }
 
-    int k; // Dichiarata fuori dal ciclo per visibilità dopo il break
+    // 3. Trasmetti la stringa usando str_buffer
+    MPI_Bcast(str_buffer, n + 1, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-    // Ciclo principale di Manber-Myers
-    for (k = 4; k < 2 * n; k *= 2) { // k parte da 4, corrisponde a ordinare per 2 caratteri
-        // 1. Ordinamento Locale (con qsort)
-        qsort(local_suffixes, local_n, sizeof(Suffix), compare_suffixes);
+    // ---- Esecuzione parallela ----
+    // Tutti i processi creano la struttura SA usando la stringa ricevuta nel buffer
+    SuffixArray* sa = create_suffix_array(str_buffer, n);
+    if (!sa) {
+        fprintf(stderr, "Error: Failed to create suffix array on rank %d\n", rank);
+        free(str_buffer); // Libera il buffer prima di abortire
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    // create_suffix_array fa una copia interna di str_buffer in sa->str.
+    // Possiamo liberare str_buffer qui perché non serve più.
+    free(str_buffer);
+    str_buffer = NULL;
 
-        // 2. Raccolta sul Root (usando il tipo MPI custom)
-        MPI_Gatherv(local_suffixes, local_n, suffix_mpi_type,
-                    all_suffixes, recvcounts_structs, displs_structs, suffix_mpi_type,
-                    0, MPI_COMM_WORLD);
 
-        int terminate = 0;
-        if (rank == 0) {
-            // 3. Merge Globale sul Master usando qsort
-            qsort(all_suffixes, n, sizeof(Suffix), compare_suffixes);
+    // Funzione parallela per costruire il Suffix Array
+    build_suffix_array_mpi(sa, rank, size);
 
-            // 4. Calcolo dei nuovi Rank sul Master
-            int current_rank = 0;
-            // Alloca rank_array solo sul master per il calcolo
-            rank_array = (int*)malloc(n * sizeof(int)); assert(rank_array != NULL);
+    mid_time = MPI_Wtime();
 
-            rank_array[all_suffixes[0].index] = current_rank;
-            for (int i = 1; i < n; i++) {
-                if (compare_suffixes(&all_suffixes[i], &all_suffixes[i-1]) != 0) {
-                    current_rank++;
-                }
-                rank_array[all_suffixes[i].index] = current_rank;
-            }
+    // ---- Il processo Root finalizza il calcolo e stampa i risultati ----
+    if (rank == 0) {
+        // Le fasi successive (LCP e LRS) rimangono sequenziali sul root
+        build_lcp_array(sa);
+        char* lrs = find_longest_repeated_substring(sa);
+        end_time = MPI_Wtime();
 
-            // Controlla la condizione di terminazione
-            if (current_rank == n - 1) {
-                terminate = 1;
-            }
-        }
+        double sa_construction_time = mid_time - start_time;
+        double lcp_search_time = end_time - mid_time;
+        double total_execution_time = end_time - start_time;
 
-        // 5. Broadcast della flag di terminazione
-        MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        if (terminate) {
-             // Se termina, il rank 0 ha già i rank finali, ma gli altri no.
-             // Il rank 0 deve comunque liberare la sua copia di rank_array
-             if (rank == 0) free(rank_array);
-            break; // Esce dal ciclo se l'ordinamento è completo
-        }
+        int valid = is_valid_suffix_array(sa);
 
-        // 6. Broadcast del rank_array aggiornato
-        // I worker allocano rank_array qui, appena prima di riceverlo
-        if (rank != 0) {
-             rank_array = (int*)malloc(n * sizeof(int)); assert(rank_array != NULL);
-        }
-        MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
-
-        // 7. Aggiornamento Locale dei Rank per la prossima iterazione (in parallelo)
-        for (int i = 0; i < local_n; i++) {
-            int global_idx = local_suffixes[i].index;
-            // k attuale rappresenta la lunghezza *dopo* l'ordinamento, quindi il passo precedente era k/2
-            int next_index = global_idx + k / 2;
-            local_suffixes[i].rank[0] = rank_array[global_idx];
-            local_suffixes[i].rank[1] = (next_index < n) ? rank_array[next_index] : -1;
-        }
-        // Libera rank_array sui worker dopo l'uso nel ciclo
-        if (rank != 0) {
-            free(rank_array);
-            rank_array = NULL; // Per sicurezza
+        printf("\n--- RESULTS ---\n");
+        printf("Valid suffix array: %s\n", valid ? "YES" : "NO");
+        if (lrs) {
+            printf("Longest repeated substring: '%s' (length: %zu)\n", lrs, strlen(lrs));
         } else {
-             // Il rank 0 libera la sua copia all'inizio del prossimo ciclo o alla fine della funzione
-             free(rank_array);
-             rank_array = NULL;
+            printf("No repeated substring found or string too short.\n");
         }
+        printf("Suffix array construction time (MPI): %.6f seconds\n", sa_construction_time);
+        printf("LCP construction + LRS search time: %.6f seconds\n", lcp_search_time);
+        printf("Total execution time: %.6f seconds\n", total_execution_time);
 
-    } // Fine del ciclo for
+        printf("\n--- STRUCTURED_RESULTS ---\n");
+        printf("ACTUAL_STRING_LENGTH:%ld\n", n);
+        printf("MPI_PROCESSES:%d\n", size);
+        printf("SA_TIME:%.6f\n", sa_construction_time);
+        printf("LCP_TIME:%.6f\n", lcp_search_time);
+        printf("TOTAL_TIME:%.6f\n", total_execution_time);
+        printf("--- END_STRUCTURED_RESULTS ---\n");
 
-    // Finalizzazione: il Rank 0 ha già l'array finale all_suffixes ordinato
-    if (rank == 0) {
-        // L'array all_suffixes contiene il risultato dell'ultimo qsort nel ciclo
-        for (int i = 0; i < n; i++) {
-            sa->sa[i] = all_suffixes[i].index;
-        }
+        free(lrs); // Libera la stringa LRS solo sul root
     }
 
-     if(rank != 0 && sa->sa == NULL) {
-        sa->sa = (int*)malloc(n * sizeof(int));
-        assert(sa->sa != NULL);
-     }
-    MPI_Bcast(sa->sa, n, MPI_INT, 0, MPI_COMM_WORLD);
+    // ---- Cleanup ----
+    // destroy_suffix_array libera sa->str (la copia), sa->sa, sa->lcp, e sa stesso.
+    // Deve essere chiamata da TUTTI i processi.
+    destroy_suffix_array(sa);
 
-    // Cleanup
-    MPI_Type_free(&suffix_mpi_type);
-    if (rank == 0) {
-        free(all_suffixes);
-        free(recvcounts_structs);
-        free(displs_structs);
-        // rank_array potrebbe essere stato liberato nel ciclo se si è terminato presto
-        if (rank_array) free(rank_array);
-    }
-    free(local_suffixes);
+    MPI_Finalize();
+    return 0;
 }
