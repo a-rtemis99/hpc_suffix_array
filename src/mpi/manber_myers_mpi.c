@@ -28,9 +28,13 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         if (rank == 0) {
             build_suffix_array(sa); // Usa la versione sequenziale con qsort
         }
+         // Assicurati che tutti i processi abbiano sa->sa allocato per ricevere il Bcast
         if(rank != 0) {
-           sa->sa = (int*)malloc(n * sizeof(int));
-           assert(sa->sa != NULL);
+            // Solo se sa->sa non è già allocato (potrebbe esserlo da create_suffix_array)
+            if (sa->sa == NULL) {
+                 sa->sa = (int*)malloc(n * sizeof(int));
+                 assert(sa->sa != NULL);
+            }
         }
         MPI_Bcast(sa->sa, n, MPI_INT, 0, MPI_COMM_WORLD);
         return;
@@ -106,8 +110,10 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         }
     }
 
+    int k; // Dichiarata fuori dal ciclo per visibilità dopo il break
+
     // Ciclo principale di Manber-Myers
-    for (int k = 4; k < 2 * n; k *= 2) { // k parte da 4, corrisponde a ordinare per 2 caratteri
+    for (k = 4; k < 2 * n; k *= 2) { // k parte da 4, corrisponde a ordinare per 2 caratteri
         // 1. Ordinamento Locale (con qsort)
         qsort(local_suffixes, local_n, sizeof(Suffix), compare_suffixes);
 
@@ -123,7 +129,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
 
             // 4. Calcolo dei nuovi Rank sul Master
             int current_rank = 0;
-            // Si usa un array temporaneo per i nuovi rank per evitare conflitti di scrittura/lettura
+            // Si usa un array temporaneo per i nuovi rank per evitare conflitti
             int* temp_rank_map = (int*)malloc(n * sizeof(int));
             assert(temp_rank_map != NULL);
 
@@ -156,25 +162,23 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         // 7. Aggiornamento Locale dei Rank per la prossima iterazione (in parallelo)
         for (int i = 0; i < local_n; i++) {
             int global_idx = local_suffixes[i].index;
-            int next_index = global_idx + k / 2; // k attuale rappresenta la lunghezza già ordinata
+            // k rappresenta la lunghezza *dopo* l'ordinamento, quindi il passo precedente era k/2
+            int next_index = global_idx + k / 2;
             local_suffixes[i].rank[0] = rank_array[global_idx];
             local_suffixes[i].rank[1] = (next_index < n) ? rank_array[next_index] : -1;
         }
-    }
+    } // Fine del ciclo for
 
     // Finalizzazione: il Rank 0 ha già l'array finale all_suffixes ordinato
     if (rank == 0) {
-         // Se il ciclo termina presto, all_suffixes non è stato ordinato nell'ultima iterazione
-         // Si esegue un ultimo sort per sicurezza (solo se terminate=1)
-        if (k < 2*n) { // k è uscito dal ciclo prima del limite
-             qsort(all_suffixes, n, sizeof(Suffix), compare_suffixes);
-        }
+        // L'array all_suffixes contiene il risultato dell'ultimo qsort nel ciclo
+        // o del qsort prima del break se terminate=1
         for (int i = 0; i < n; i++) {
             sa->sa[i] = all_suffixes[i].index;
         }
     }
 
-    // Ci si assicura che tutti i processi abbiano il risultato finale
+    // Assicurati che tutti i processi abbiano il risultato finale
      if(rank != 0 && sa->sa == NULL) {
         sa->sa = (int*)malloc(n * sizeof(int));
         assert(sa->sa != NULL);
