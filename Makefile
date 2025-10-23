@@ -3,9 +3,9 @@ CC = gcc
 MPICC = mpicc
 NVCC = nvcc
 CFLAGS = -Wall -Wextra -O3 -std=c99
-# Flags specifici per NVCC (usa ottimizzazione -O3, standard C++11 è comune per Thrust)
-NVCCFLAGS = -O3 -std=c++11 -arch=sm_60 # Architettura Pascal (P100 su Kaggle è sm_60)
-LDFLAGS =
+# Flags specifici per NVCC (usa ottimizzazione -O3, standard C++11, architettura P100)
+NVCCFLAGS = -O3 -std=c++11 -arch=sm_60
+LDFLAGS = -lm # Aggiunto -lm per eventuali funzioni matematiche
 
 # === DIRECTORIES ===
 SRC_DIR = src
@@ -13,73 +13,69 @@ BIN_DIR = bin
 COMMON_DIR = $(SRC_DIR)/common
 SEQ_DIR = $(SRC_DIR)/sequential
 MPI_DIR = $(SRC_DIR)/mpi
-CUDA_DIR = $(SRC_DIR)/cuda # Aggiunto CUDA_DIR
+CUDA_DIR = $(SRC_DIR)/cuda
 BENCH_DIR = $(SRC_DIR)/benchmark
 
 # === SOURCE AND OBJECT FILES ===
 # Common
-COMMON_SRC = $(COMMON_DIR)/utils.c
-COMMON_OBJ = $(COMMON_SRC:.c=.o)
+COMMON_SRC = $(wildcard $(COMMON_DIR)/*.c) # Usa wildcard per trovare tutti i .c
+COMMON_OBJ = $(patsubst $(COMMON_DIR)/%.c,$(COMMON_DIR)/%.o,$(COMMON_SRC))
 
 # Sequential
-SEQ_SRC = $(SEQ_DIR)/manber_myers.c
-SEQ_MAIN_SRC = $(SEQ_DIR)/main_sequential.c
-# Oggetti specifici per l'eseguibile sequenziale
-SEQ_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_SRC:.c=.o) $(SEQ_MAIN_SRC:.c=.o)
+SEQ_SRC = $(wildcard $(SEQ_DIR)/*.c)
+# Esclude main_sequential.o se esiste un main_benchmark.c
+SEQ_OBJS_NO_MAIN = $(patsubst $(SEQ_DIR)/%.c,$(SEQ_DIR)/%.o,$(filter-out $(SEQ_DIR)/main_sequential.c,$(SEQ_SRC)))
+SEQ_MAIN_OBJ = $(SEQ_DIR)/main_sequential.o
+SEQ_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_OBJS_NO_MAIN) $(SEQ_MAIN_OBJ)
 
 # MPI
-MPI_SRC = $(MPI_DIR)/manber_myers_mpi.c
-MPI_MAIN_SRC = $(MPI_DIR)/main_mpi.c
-# Oggetti specifici per l'eseguibile MPI (include il manber_myers.o sequenziale per build_lcp etc.)
-MPI_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(MPI_SRC:.c=.o) $(MPI_MAIN_SRC:.c=.o)
+MPI_SRC = $(wildcard $(MPI_DIR)/*.c)
+MPI_OBJS_NO_MAIN = $(patsubst $(MPI_DIR)/%.c,$(MPI_DIR)/%.o,$(filter-out $(MPI_DIR)/main_mpi.c,$(MPI_SRC)))
+MPI_MAIN_OBJ = $(MPI_DIR)/main_mpi.o
+# Dipende dagli oggetti comuni, oggetti sequenziali (per LCP etc), oggetti MPI
+MPI_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(MPI_OBJS_NO_MAIN) $(MPI_MAIN_OBJ)
 
 # CUDA
-CUDA_SRC = $(CUDA_DIR)/manber_myers.cu
-CUDA_MAIN_SRC = $(CUDA_DIR)/main_cuda.cu
-# Oggetti specifici per l'eseguibile CUDA (include il manber_myers.o sequenziale per build_lcp etc.)
-# Gli oggetti CUDA hanno suffisso .cu.o
-CUDA_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(CUDA_SRC:.cu=.cu.o) $(CUDA_MAIN_SRC:.cu=.cu.o)
+CUDA_SRC = $(wildcard $(CUDA_DIR)/*.cu)
+# Oggetti CUDA avranno suffisso .cu.o
+CUDA_OBJS = $(patsubst $(CUDA_DIR)/%.cu,$(CUDA_DIR)/%.cu.o,$(CUDA_SRC))
+# Dipende dagli oggetti comuni, oggetti sequenziali (per LCP etc), oggetti CUDA
+CUDA_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(CUDA_OBJS)
 
 # Benchmark (usa la logica sequenziale di manber_myers.c)
-BENCH_SRC = $(BENCH_DIR)/main_benchmark.c
-BENCH_OBJ = $(BENCH_SRC:.c=.o)
-BENCH_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(BENCH_OBJ)
+BENCH_SRC = $(wildcard $(BENCH_DIR)/*.c)
+BENCH_OBJS = $(patsubst $(BENCH_DIR)/%.c,$(BENCH_DIR)/%.o,$(BENCH_SRC))
+BENCH_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(BENCH_OBJS)
 
 # === TARGETS ===
 TARGET_SEQ = $(BIN_DIR)/main_sequential
 TARGET_MPI = $(BIN_DIR)/main_mpi
-TARGET_CUDA = $(BIN_DIR)/main_cuda # Aggiunto TARGET_CUDA
+TARGET_CUDA = $(BIN_DIR)/main_cuda
 TARGET_BENCH = $(BIN_DIR)/suffix_array_benchmark
 
-# Aggiunto 'cuda' e 'run-benchmark-cuda' ai target .PHONY
 .PHONY: all sequential mpi cuda benchmark charts clean distclean run-benchmark run-benchmark-mpi run-benchmark-cuda run-mpi test test-mpi test-correctness env-setup help generate-data
 
 # === PRIMARY TARGETS ===
-# Aggiunto 'cuda' al target 'all'
 all: sequential mpi cuda benchmark
 
 sequential: $(TARGET_SEQ)
 
 mpi: $(TARGET_MPI)
 
-cuda: $(TARGET_CUDA) # Aggiunto target cuda
+cuda: $(TARGET_CUDA)
 
 benchmark: $(TARGET_BENCH)
 
 # === LINKING RULES ===
-# Linking Sequential Target
 $(TARGET_SEQ): $(SEQ_TARGET_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Linking MPI Target
 $(TARGET_MPI): $(MPI_TARGET_OBJS) | $(BIN_DIR)
 	$(MPICC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Linking CUDA Target (usa nvcc per il linking finale)
 $(TARGET_CUDA): $(CUDA_TARGET_OBJS) | $(BIN_DIR)
-	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(LDFLAGS) # Linka usando nvcc
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Linking Benchmark Target
 $(TARGET_BENCH): $(BENCH_TARGET_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -87,29 +83,21 @@ $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 # === COMPILATION RULES (PATTERN RULES) ===
-# Compile common source files (.c -> .o)
-$(COMMON_DIR)/%.o: $(COMMON_DIR)/%.c $(COMMON_DIR)/utils.h $(COMMON_DIR)/suffix_array.h
+# Regola generica per .c -> .o (usa CC)
+$(COMMON_DIR)/%.o $(SEQ_DIR)/%.o $(BENCH_DIR)/%.o: %.c $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Compile sequential source files (.c -> .o)
-$(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c $(COMMON_DIR)/suffix_array.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-# Compile MPI source files (.c -> .o, usa mpicc)
-$(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h
+# Regola specifica per MPI .c -> .o (usa MPICC)
+$(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	$(MPICC) $(CFLAGS) -c -o $@ $<
 
-# Nuova regola CORRETTA per compilare file .cu -> .cu.o
-$(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h
+# Regola specifica e CORRETTA per CUDA .cu -> .cu.o (usa NVCC)
+# Assicurati che suffix_array.h e utils.h siano C++ compatibili o usa extern "C"
+$(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	@echo "Compiling CUDA file: $<"
-	$(NVCC) $(NVCCFLAGS) -c -o $@ $< # $< ora punta correttamente al file .cu
-
-# Compile benchmark source files (.c -> .o)
-$(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c $(COMMON_DIR)/suffix_array.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
 
 # === UTILITY & TESTING TARGETS ===
-# Setup Python virtual environment
 env-setup:
 	@echo "🐍 Setting up Python virtual environment..."
 	sudo apt-get update && sudo apt-get install -y python3-full python3-venv
@@ -117,52 +105,36 @@ env-setup:
 	./hpc_env/bin/pip install pandas matplotlib seaborn numpy
 	@echo "✅ Python environment configured in ./hpc_env/"
 
-# Generate test data
 generate-data:
 	@echo "💾 Generating large test datasets..."
 	@python3 scripts/generate_large_datasets.py
 
-# Generate charts from benchmark results
-charts:
+charts: env-check # Aggiunta dipendenza per controllo ambiente python
 	@echo "📊 Generating charts..."
-	# Assicurati che lo script esista e usi l'env corretto
 	./hpc_env/bin/python3 scripts/generate_charts.py
 
-# Run sequential benchmark and generate charts (obsoleto?)
-# run-benchmark: benchmark
-#	./$(TARGET_BENCH) # Questo eseguibile benchmark cosa fa? Potrebbe essere superfluo
-#	make charts
-
-# Run MPI benchmark and save results
-run-benchmark-mpi: mpi
+run-benchmark-mpi: mpi env-check
 	@echo "🚀 Running MPI benchmark..."
-	# Assicurati che lo script esista e usi l'env corretto
 	./hpc_env/bin/python3 scripts/benchmark_mpi.py
 
-# Aggiunto target per benchmark CUDA
-run-benchmark-cuda: cuda
+run-benchmark-cuda: cuda env-check
 	@echo "🚀 Running CUDA benchmark..."
-	# Assicurati che lo script esista e usi l'env corretto
 	./hpc_env/bin/python3 scripts/benchmark_cuda.py
 
-# Run MPI version on a large file for a quick test
 run-mpi: mpi
 	@echo "🚀 Running MPI version on 500MB file with 4 processes..."
 	mpirun --allow-run-as-root --oversubscribe -np 4 ./$(TARGET_MPI) test_data/large/random_500MB.txt
 
-# Basic sequential tests
 test: sequential
 	@echo "=== TESTING SEQUENTIAL VERSION ==="
 	./$(TARGET_SEQ) "banana"
 	@echo ""
 	./$(TARGET_SEQ) "mississippi"
 
-# Basic MPI tests
 test-mpi: mpi
 	@echo "=== TESTING MPI VERSION (4 processes) ==="
 	mpirun --allow-run-as-root --oversubscribe -np 4 ./$(TARGET_MPI) test_data/banana.txt
 
-# Correctness tests for sequential version
 test-correctness: sequential
 	@echo "=== CORRECTNESS TESTS ==="
 	@echo "Test 1: 'banana' (expected: 'ana')"
@@ -172,13 +144,19 @@ test-correctness: sequential
 	@echo "Test 3: 'abcabcabc' (expected: 'abcabc')"
 	@./$(TARGET_SEQ) "abcabcabc" | grep "Longest repeated substring"
 
+# Target per verificare se l'ambiente Python è attivo
+.PHONY: env-check
+env-check:
+	@if [ ! -d "hpc_env" ]; then \
+		echo "❌ Python environment not found. Please run 'make env-setup' first."; \
+		exit 1; \
+	fi
+
 # === CLEANING TARGETS ===
 clean:
 	@echo "🧹 Cleaning build files..."
-	# Rimuove tutti i file oggetto e gli eseguibili
-	rm -f $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(CUDA_DIR)/*.cu.o $(COMMON_DIR)/*.o $(BENCH_DIR)/*.o
+	rm -f $(COMMON_DIR)/*.o $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(CUDA_DIR)/*.cu.o $(BENCH_DIR)/*.o
 	rm -f $(TARGET_SEQ) $(TARGET_MPI) $(TARGET_CUDA) $(TARGET_BENCH)
-	# Rimuove i risultati generati
 	rm -rf results/csv/*.csv results/charts/*.png
 
 distclean: clean
