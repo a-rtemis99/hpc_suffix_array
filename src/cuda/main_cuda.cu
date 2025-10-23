@@ -1,22 +1,34 @@
+// src/cuda/main_cuda.cu
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h> 
-#include <cuda_runtime.h> 
-#include "../common/suffix_array.h"
-#include "../common/utils.h"
+#include <sys/time.h> // Per gettimeofday
+#include <cuda_runtime.h> // Necessario per timing con eventi CUDA
+#include <unistd.h> // Per gethostname (opzionale)
+#include "../common/suffix_array.h" // Ora gestisce extern "C" automaticamente
+#include "../common/utils.h" // Per read_file etc.
+
+// --- Definizione Macro Error Checking CUDA ---
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
+   if (code != cudaSuccess) {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+// Macro da usare nel codice
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+// --- Fine Definizione Macro ---
+
 
 // Prototipo della funzione CUDA (definita in manber_myers.cu)
-// Dichiarata extern "C" per linkage corretto
-extern "C" void build_suffix_array_cuda(SuffixArray* sa_host);
+// Non serve più extern "C" qui, è gestito dall'header
+void build_suffix_array_cuda(SuffixArray* sa_host);
 
-// Prototipi funzioni LCP/LRS/Validazione (definite in manber_myers.c sequenziale)
-// Devono essere compilate come C++ o dichiarate extern "C" nel file C
-extern "C" {
-    void build_lcp_array(SuffixArray* sa);
-    char* find_longest_repeated_substring(SuffixArray* sa);
-    int is_valid_suffix_array(SuffixArray* sa);
-}
+// Prototipi funzioni C (linkage gestito dall'header)
+void build_lcp_array(SuffixArray* sa);
+char* find_longest_repeated_substring(SuffixArray* sa);
+int is_valid_suffix_array(SuffixArray* sa);
 
 // Funzione helper per timing CPU
 double get_time() {
@@ -29,12 +41,13 @@ double get_time() {
 void print_structured_results_for_script(long string_length, double sa_time, double lcp_time, double total_time) {
     printf("\n--- STRUCTURED_RESULTS ---\n");
     printf("ACTUAL_STRING_LENGTH:%ld\n", string_length);
-    printf("MPI_PROCESSES:1\n"); // CUDA gira come un singolo processo dal punto di vista dell'OS
+    printf("MPI_PROCESSES:1\n"); // CUDA gira come un singolo processo OS
     printf("SA_TIME:%.6f\n", sa_time);
     printf("LCP_TIME:%.6f\n", lcp_time);
     printf("TOTAL_TIME:%.6f\n", total_time);
     printf("--- END_STRUCTURED_RESULTS ---\n");
 }
+
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
@@ -66,21 +79,18 @@ int main(int argc, char* argv[]) {
     }
 
     // --- TIMING CON EVENTI CUDA ---
-    // Più preciso per misurare solo il lavoro GPU + trasferimenti
     cudaEvent_t start_event, stop_event, mid_event;
     gpuErrchk(cudaEventCreate(&start_event));
     gpuErrchk(cudaEventCreate(&mid_event));
     gpuErrchk(cudaEventCreate(&stop_event));
 
     // Crea struttura SuffixArray su Host
-    // Passiamo la stringa originale, create_suffix_array ne farà una copia interna
     SuffixArray* sa = create_suffix_array(input_str_original, n);
     if (!sa) {
         fprintf(stderr, "Error: Failed to create suffix array structure (memory allocation?)\n");
         if (input_is_file) free(input_str_original);
         return 1;
     }
-    // Libera l'originale se letto da file, ora abbiamo la copia in sa->str
     if (input_is_file) {
         free(input_str_original);
         input_str_original = NULL;
@@ -107,10 +117,10 @@ int main(int argc, char* argv[]) {
     gpuErrchk(cudaEventElapsedTime(&total_time_ms, start_event, stop_event));
 
     double sa_construction_time_s = sa_time_ms / 1000.0;
-    double lcp_search_time_s = (total_time_ms - sa_time_ms) / 1000.0;
+    double lcp_search_time_s = (total_time_ms > sa_time_ms) ? (total_time_ms - sa_time_ms) / 1000.0 : 0.0; // Evita tempi negativi
     double total_execution_time_s = total_time_ms / 1000.0;
 
-    // Validazione e Stampa Risultati (come in main_sequential)
+    // Validazione e Stampa Risultati
     int valid = is_valid_suffix_array(sa);
     printf("\n=== RESULTS ===\n");
     printf("Valid suffix array: %s\n", valid ? "YES" : "NO");
