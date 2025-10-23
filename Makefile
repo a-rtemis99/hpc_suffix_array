@@ -1,7 +1,10 @@
 # === COMPILER AND FLAGS ===
 CC = gcc
 MPICC = mpicc
+NVCC = nvcc
 CFLAGS = -Wall -Wextra -O3 -std=c99
+# Flags specifici per NVCC (usa ottimizzazione -O3, standard C++11 è comune per Thrust)
+NVCCFLAGS = -O3 -std=c++11 -arch=sm_60 # Architettura Pascal (P100 su Kaggle è sm_60)
 LDFLAGS =
 
 # === DIRECTORIES ===
@@ -10,6 +13,7 @@ BIN_DIR = bin
 COMMON_DIR = $(SRC_DIR)/common
 SEQ_DIR = $(SRC_DIR)/sequential
 MPI_DIR = $(SRC_DIR)/mpi
+CUDA_DIR = $(SRC_DIR)/cuda # Aggiunto CUDA_DIR
 BENCH_DIR = $(SRC_DIR)/benchmark
 
 # === SOURCE AND OBJECT FILES ===
@@ -20,100 +24,130 @@ COMMON_OBJ = $(COMMON_SRC:.c=.o)
 # Sequential
 SEQ_SRC = $(SEQ_DIR)/manber_myers.c
 SEQ_MAIN_SRC = $(SEQ_DIR)/main_sequential.c
-SEQ_OBJ = $(COMMON_OBJ) $(SEQ_SRC:.c=.o) $(SEQ_MAIN_SRC:.c=.o)
+# Oggetti specifici per l'eseguibile sequenziale
+SEQ_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_SRC:.c=.o) $(SEQ_MAIN_SRC:.c=.o)
 
 # MPI
 MPI_SRC = $(MPI_DIR)/manber_myers_mpi.c
 MPI_MAIN_SRC = $(MPI_DIR)/main_mpi.c
-MPI_OBJ = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(MPI_SRC:.c=.o) $(MPI_MAIN_SRC:.c=.o)
+# Oggetti specifici per l'eseguibile MPI (include il manber_myers.o sequenziale per build_lcp etc.)
+MPI_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(MPI_SRC:.c=.o) $(MPI_MAIN_SRC:.c=.o)
 
-# Benchmark
+# CUDA
+CUDA_SRC = $(CUDA_DIR)/manber_myers.cu
+CUDA_MAIN_SRC = $(CUDA_DIR)/main_cuda.cu
+# Oggetti specifici per l'eseguibile CUDA (include il manber_myers.o sequenziale per build_lcp etc.)
+# Gli oggetti CUDA hanno suffisso .cu.o
+CUDA_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(CUDA_SRC:.cu=.cu.o) $(CUDA_MAIN_SRC:.cu=.cu.o)
+
+# Benchmark (usa la logica sequenziale di manber_myers.c)
 BENCH_SRC = $(BENCH_DIR)/main_benchmark.c
 BENCH_OBJ = $(BENCH_SRC:.c=.o)
+BENCH_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(BENCH_OBJ)
 
 # === TARGETS ===
 TARGET_SEQ = $(BIN_DIR)/main_sequential
 TARGET_MPI = $(BIN_DIR)/main_mpi
+TARGET_CUDA = $(BIN_DIR)/main_cuda # Aggiunto TARGET_CUDA
 TARGET_BENCH = $(BIN_DIR)/suffix_array_benchmark
 
-.PHONY: all sequential mpi benchmark charts clean distclean run-benchmark run-benchmark-mpi run-mpi test test-mpi test-correctness env-setup help generate-data
+# Aggiunto 'cuda' e 'run-benchmark-cuda' ai target .PHONY
+.PHONY: all sequential mpi cuda benchmark charts clean distclean run-benchmark run-benchmark-mpi run-benchmark-cuda run-mpi test test-mpi test-correctness env-setup help generate-data
 
 # === PRIMARY TARGETS ===
-all: sequential mpi benchmark
+# Aggiunto 'cuda' al target 'all'
+all: sequential mpi cuda benchmark
 
 sequential: $(TARGET_SEQ)
 
 mpi: $(TARGET_MPI)
 
+cuda: $(TARGET_CUDA) # Aggiunto target cuda
+
 benchmark: $(TARGET_BENCH)
 
 # === LINKING RULES ===
 # Linking Sequential Target
-$(TARGET_SEQ): $(SEQ_OBJ) | $(BIN_DIR)
+$(TARGET_SEQ): $(SEQ_TARGET_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Linking MPI Target
-$(TARGET_MPI): $(MPI_OBJ) | $(BIN_DIR)
+$(TARGET_MPI): $(MPI_TARGET_OBJS) | $(BIN_DIR)
 	$(MPICC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Linking Benchmark Target (uses sequential manber_myers.c)
-$(TARGET_BENCH): $(BENCH_OBJ) $(SEQ_DIR)/manber_myers.o $(COMMON_OBJ) | $(BIN_DIR)
+# Linking CUDA Target (usa nvcc per il linking finale)
+$(TARGET_CUDA): $(CUDA_TARGET_OBJS) | $(BIN_DIR)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(LDFLAGS) # Linka usando nvcc
+
+# Linking Benchmark Target
+$(TARGET_BENCH): $(BENCH_TARGET_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 # === COMPILATION RULES (PATTERN RULES) ===
-# Compile common source files
-$(COMMON_DIR)/%.o: $(COMMON_DIR)/%.c
+# Compile common source files (.c -> .o)
+$(COMMON_DIR)/%.o: $(COMMON_DIR)/%.c $(COMMON_DIR)/utils.h $(COMMON_DIR)/suffix_array.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Compile sequential source files
-$(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c
+# Compile sequential source files (.c -> .o)
+$(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c $(COMMON_DIR)/suffix_array.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Compile MPI source files
-$(MPI_DIR)/%.o: $(MPI_DIR)/%.c
+# Compile MPI source files (.c -> .o, usa mpicc)
+$(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h
 	$(MPICC) $(CFLAGS) -c -o $@ $<
 
-# Compile benchmark source files
-$(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+# Compile CUDA source files (.cu -> .cu.o, usa nvcc)
+$(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h
+	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
 
+# Compile benchmark source files (.c -> .o)
+$(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c $(COMMON_DIR)/suffix_array.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # === UTILITY & TESTING TARGETS ===
 # Setup Python virtual environment
 env-setup:
-	@echo "Setting up Python virtual environment..."
+	@echo "🐍 Setting up Python virtual environment..."
 	sudo apt-get update && sudo apt-get install -y python3-full python3-venv
 	python3 -m venv hpc_env
 	./hpc_env/bin/pip install pandas matplotlib seaborn numpy
-	@echo "Python environment configured in ./hpc_env/"
+	@echo "✅ Python environment configured in ./hpc_env/"
 
 # Generate test data
 generate-data:
-	@echo "Generating large test datasets..."
+	@echo "💾 Generating large test datasets..."
 	@python3 scripts/generate_large_datasets.py
 
 # Generate charts from benchmark results
 charts:
-	@echo "Generating charts..."
+	@echo "📊 Generating charts..."
+	# Assicurati che lo script esista e usi l'env corretto
 	./hpc_env/bin/python3 scripts/generate_charts.py
 
-# Run sequential benchmark and generate charts
-run-benchmark: benchmark
-	./$(TARGET_BENCH)
-	make charts
+# Run sequential benchmark and generate charts (obsoleto?)
+# run-benchmark: benchmark
+#	./$(TARGET_BENCH) # Questo eseguibile benchmark cosa fa? Potrebbe essere superfluo
+#	make charts
 
 # Run MPI benchmark and save results
 run-benchmark-mpi: mpi
-	@echo "Running MPI benchmark..."
+	@echo "🚀 Running MPI benchmark..."
+	# Assicurati che lo script esista e usi l'env corretto
 	./hpc_env/bin/python3 scripts/benchmark_mpi.py
+
+# Aggiunto target per benchmark CUDA
+run-benchmark-cuda: cuda
+	@echo "🚀 Running CUDA benchmark..."
+	# Assicurati che lo script esista e usi l'env corretto
+	./hpc_env/bin/python3 scripts/benchmark_cuda.py
 
 # Run MPI version on a large file for a quick test
 run-mpi: mpi
-	@echo "Running MPI version on 500MB file with 4 processes..."
-	mpirun -np 4 ./$(TARGET_MPI) test_data/random_500MB.txt
+	@echo "🚀 Running MPI version on 500MB file with 4 processes..."
+	mpirun --allow-run-as-root --oversubscribe -np 4 ./$(TARGET_MPI) test_data/large/random_500MB.txt
 
 # Basic sequential tests
 test: sequential
@@ -125,7 +159,7 @@ test: sequential
 # Basic MPI tests
 test-mpi: mpi
 	@echo "=== TESTING MPI VERSION (4 processes) ==="
-	mpirun -np 4 ./$(TARGET_MPI) test_data/banana.txt
+	mpirun --allow-run-as-root --oversubscribe -np 4 ./$(TARGET_MPI) test_data/banana.txt
 
 # Correctness tests for sequential version
 test-correctness: sequential
@@ -139,35 +173,38 @@ test-correctness: sequential
 
 # === CLEANING TARGETS ===
 clean:
-	@echo "Cleaning build files..."
-	rm -f $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(COMMON_DIR)/*.o $(BENCH_DIR)/*.o
-	rm -f $(TARGET_SEQ) $(TARGET_MPI) $(TARGET_BENCH)
+	@echo "🧹 Cleaning build files..."
+	# Rimuove tutti i file oggetto e gli eseguibili
+	rm -f $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(CUDA_DIR)/*.cu.o $(COMMON_DIR)/*.o $(BENCH_DIR)/*.o
+	rm -f $(TARGET_SEQ) $(TARGET_MPI) $(TARGET_CUDA) $(TARGET_BENCH)
+	# Rimuove i risultati generati
 	rm -rf results/csv/*.csv results/charts/*.png
 
 distclean: clean
-	@echo "Performing deep clean (removes Python venv and bin)..."
+	@echo "🔥 Performing deep clean (removes Python venv and bin)..."
 	rm -rf hpc_env $(BIN_DIR)
 
 # === HELP TARGET ===
 help:
 	@echo "=== HPC SUFFIX ARRAY MAKEFILE TARGETS ==="
 	@echo "--- Build Targets ---"
-	@echo "  make all                - Compila tutte le versioni (sequential, mpi, benchmark)"
-	@echo "  make sequential         - Compila solo la versione sequenziale"
-	@echo "  make mpi                - Compila solo la versione MPI"
-	@echo "  make benchmark          - Compila l'eseguibile per il benchmark sequenziale"
+	@echo "  make all           - Compila tutte le versioni (sequential, mpi, cuda, benchmark)"
+	@echo "  make sequential    - Compila solo la versione sequenziale"
+	@echo "  make mpi           - Compila solo la versione MPI"
+	@echo "  make cuda          - Compila solo la versione CUDA"
+	@echo "  make benchmark     - Compila l'eseguibile per il benchmark (sequenziale?)"
 	@echo ""
 	@echo "--- Execution & Testing ---"
-	@echo "  make run-benchmark      - Esegue il benchmark sequenziale e genera i grafici"
 	@echo "  make run-benchmark-mpi  - Esegue il benchmark MPI e salva i risultati"
-	@echo "  make test               - Esegue test di base sulla versione sequenziale"
-	@echo "  make test-mpi           - Esegue test di base sulla versione MPI"
-	@echo "  make test-correctness   - Test di correttezza con output atteso"
+	@echo "  make run-benchmark-cuda - Esegue il benchmark CUDA e salva i risultati"
+	@echo "  make test          - Esegue test di base sulla versione sequenziale"
+	@echo "  make test-mpi      - Esegue test di base sulla versione MPI"
+	@echo "  make test-correctness - Test di correttezza con output atteso"
 	@echo ""
 	@echo "--- Utility Targets ---"
-	@echo "  make generate-data      - Genera i file di test di grandi dimensioni"
-	@echo "  make charts             - Genera i grafici dai risultati dei benchmark"
-	@echo "  make env-setup          - Configura l'ambiente virtuale Python per i grafici"
-	@echo "  make clean              - Rimuove i file oggetto e gli eseguibili"
-	@echo "  make distclean          - Rimuove tutto, incluso l'ambiente Python"
-	@echo "  make help               - Mostra questo messaggio di aiuto"
+	@echo "  make generate-data - Genera i file di test di grandi dimensioni"
+	@echo "  make charts        - Genera i grafici dai risultati dei benchmark (richiede CSV)"
+	@echo "  make env-setup     - Configura l'ambiente virtuale Python per i grafici"
+	@echo "  make clean         - Rimuove i file oggetto e gli eseguibili"
+	@echo "  make distclean     - Rimuove tutto, incluso l'ambiente Python e la cartella bin"
+	@echo "  make help          - Mostra questo messaggio di aiuto"
