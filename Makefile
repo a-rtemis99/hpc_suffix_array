@@ -99,9 +99,10 @@ $(SEQ_DIR)/%.o: $(SEQ_DIR)/%.c $(COMMON_DIR)/suffix_array.h
 $(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h
 	$(MPICC) $(CFLAGS) -c -o $@ $<
 
-# Compile CUDA source files (.cu -> .cu.o, usa nvcc)
-$(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h
-	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
+# Nuova regola CORRETTA per compilare file .cu -> .cu.o
+$(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h
+	@echo "Compiling CUDA file: $<"
+	$(NVCC) $(NVCCFLAGS) -c -o $@ $< # $< ora punta correttamente al file .cu
 
 # Compile benchmark source files (.c -> .o)
 $(BENCH_DIR)/%.o: $(BENCH_DIR)/%.c $(COMMON_DIR)/suffix_array.h
