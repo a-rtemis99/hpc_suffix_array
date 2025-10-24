@@ -12,22 +12,46 @@ import re
 
 # Usa la stessa funzione parse_output degli altri script
 def parse_output(output):
-    # ... (COPIA E INCOLLA LA FUNZIONE parse_output QUI) ...
-    result = { 'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0, 'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0 }
+    """Estrae informazioni dettagliate dall'output del programma CUDA."""
+    result = {
+        'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0,
+        'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0
+    }
+    
+    lrs_match = re.search(r"Longest repeated substring:.*\(length: (\d+)\)", output)
+    if lrs_match:
+        result['lrs_length'] = int(lrs_match.group(1))
+
+    lrs_str_match = re.search(r"Longest repeated substring: '([^']*)'", output)
+    if lrs_str_match:
+        result['lrs_string'] = lrs_str_match.group(1)
+
     if '--- STRUCTURED_RESULTS ---' in output:
         structured_data = output.split('--- STRUCTURED_RESULTS ---')[1]
+        
         sa_time_match = re.search(r"SA_TIME:([\d.]+)", structured_data)
         if sa_time_match: result['sa_time'] = float(sa_time_match.group(1))
+
         lcp_time_match = re.search(r"LCP_TIME:([\d.]+)", structured_data)
         if lcp_time_match: result['lcp_time'] = float(lcp_time_match.group(1))
+
         total_time_match = re.search(r"TOTAL_TIME:([\d.]+)", structured_data)
         if total_time_match: result['total_time'] = float(total_time_match.group(1))
+
         len_match = re.search(r"ACTUAL_STRING_LENGTH:(\d+)", structured_data)
         if len_match: result['suffix_array_length'] = int(len_match.group(1))
-    lrs_match = re.search(r"Longest repeated substring:.*\(length: (\d+)\)", output)
-    if lrs_match: result['lrs_length'] = int(lrs_match.group(1))
-    lrs_str_match = re.search(r"Longest repeated substring: '([^']*)'", output)
-    if lrs_str_match: result['lrs_string'] = lrs_str_match.group(1)
+    
+    # Fallback
+    if result['total_time'] == 0.0:
+        total_time_fallback = re.search(r"Total execution time.*: ([\d.]+)", output)
+        if total_time_fallback:
+            result['total_time'] = float(total_time_fallback.group(1))
+            
+    if result['sa_time'] == 0.0:
+        sa_time_fallback = re.search(r"Suffix array construction time.*: ([\d.]+)", output)
+        if sa_time_fallback:
+            result['sa_time'] = float(sa_time_fallback.group(1))
+
     return result
 
 
@@ -35,7 +59,6 @@ def run_cuda_benchmark(input_file):
     """Esegue benchmark CUDA"""
     cmd = ["./bin/main_cuda", input_file] # Nome dell'eseguibile CUDA
 
-    start_time_os = time.time() # Tempo OS per catturare timeout
     try:
         result = subprocess.run(
             cmd,
@@ -43,14 +66,11 @@ def run_cuda_benchmark(input_file):
             text=True,
             timeout=3600  # 1 ora timeout
         )
-        # Non usiamo execution_time = time.time() - start_time_os
-        # perché i tempi CUDA sono misurati internamente e sono più precisi.
-        # Estrai informazioni dettagliate dall'output
         parsed_info = parse_output(result.stdout)
 
         return {
             'success': result.returncode == 0,
-            'time': parsed_info['total_time'], # Usa il tempo misurato da CUDA events
+            'time': parsed_info['total_time'], # Usa il tempo interno CUDA
             'output': result.stdout,
             'error': result.stderr,
             'lrs_length': parsed_info['lrs_length'],
@@ -62,9 +82,9 @@ def run_cuda_benchmark(input_file):
         }
 
     except subprocess.TimeoutExpired:
-        return {'success': False, 'time': 3600, 'error': 'TIMEOUT', 'lrs_length': 0, 'lrs_string': 'TIMEOUT', 'sa_time':0.0, 'lcp_time':0.0, 'total_time':0.0}
+        return {'success': False, 'time': 3600, 'error': 'TIMEOUT', 'lrs_length': 0, 'lrs_string': 'TIMEOUT', 'sa_time':0.0, 'lcp_time':0.0, 'total_time':0.0, 'suffix_array_length': 0}
     except Exception as e:
-         return {'success': False, 'time': 0, 'error': str(e), 'lrs_length': 0, 'lrs_string': 'ERROR', 'sa_time':0.0, 'lcp_time':0.0, 'total_time':0.0}
+         return {'success': False, 'time': 0, 'error': str(e), 'lrs_length': 0, 'lrs_string': 'ERROR', 'sa_time':0.0, 'lcp_time':0.0, 'total_time':0.0, 'suffix_array_length': 0}
 
 def format_time(seconds):
     """Formatta il tempo in modo leggibile"""
@@ -81,6 +101,9 @@ def main():
     cuda_files = [
         "test_data/banana.txt",
         "test_data/mississippi.txt",
+        "test_data/abcabcabc.txt",
+        "test_data/aaaa.txt",
+        "test_data/ababab.txt",
         "test_data/large/random_1MB.txt",
         "test_data/large/random_50MB.txt",
         "test_data/large/random_100MB.txt",
@@ -105,7 +128,7 @@ def main():
         result = run_cuda_benchmark(test_file)
 
         if result['success']:
-            time_str = format_time(result['total_time']) # Usa tempo CUDA
+            time_str = format_time(result['total_time'])
             print(f"OK ({time_str:>7}) - LRS Length: {result['lrs_length']}")
             cuda_results.append({
                 'file': os.path.basename(test_file),
@@ -125,20 +148,24 @@ def main():
 
         # Calcola speedup vs sequenziale
         seq_times = {}
+        seq_csv_path = "results/csv/sequential_results.csv" # --- PATH CORRETTO ---
         try:
-            df_seq = pd.read_csv("results/csv/sequential_results.csv")
-            # Usa SA_TIME per il confronto dello speedup
+            df_seq = pd.read_csv(seq_csv_path)
             seq_times = pd.Series(df_seq.sa_time.values, index=df_seq.file).to_dict()
         except FileNotFoundError:
-            print("\nAttenzione: file risultati sequenziali non trovato. Speedup non calcolato.")
+            print(f"\nAttenzione: file '{seq_csv_path}' non trovato. Speedup non calcolato.")
 
-        df['speedup_vs_seq'] = df.apply(
-            lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
-            axis=1
-        )
+        if seq_times:
+            df['speedup_vs_seq'] = df.apply(
+                lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
+                axis=1
+            )
+        else:
+            df['speedup_vs_seq'] = 0.0
 
-        os.makedirs("results/csv", exist_ok=True)
-        output_file = "results/csv/cuda_results.csv"
+        output_dir = "results/csv" 
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, "cuda_results.csv")
         df.to_csv(output_file, index=False)
 
         print("\n" + "=" * 60)
@@ -150,7 +177,8 @@ def main():
         print(f"{'File':<25} {'Tempo SA':>10} {'Speedup Seq':>12}")
         print("-" * 60)
         for _, row in df.iterrows():
-            speedup_str = f"{row['speedup_vs_seq']:.2f}x" if row['speedup_vs_seq'] > 0 else "N/A"
+            speedup_str = f"{row['speedup_vs_seq']:.2f}x"
+            if not seq_times: speedup_str = "N/A"
             print(f"{row['file']:<25} {format_time(row['sa_time']):>10} {speedup_str:>12}")
         print("-" * 60)
 

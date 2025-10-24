@@ -14,11 +14,9 @@ def parse_output(output):
     """Estrae informazioni dettagliate dall'output del programma MPI."""
     result = {
         'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0,
-        'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0,
-        'parallel_efficiency': 0.0, 'execution_details': 'N/A'
+        'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0
     }
-
-    # 1. Cerca i dati leggibili dall'utente per un fallback
+    
     lrs_match = re.search(r"Longest repeated substring:.*\(length: (\d+)\)", output)
     if lrs_match:
         result['lrs_length'] = int(lrs_match.group(1))
@@ -27,12 +25,9 @@ def parse_output(output):
     if lrs_str_match:
         result['lrs_string'] = lrs_str_match.group(1)
 
-    # 2. Estrae i dati precisi dal blocco strutturato (il nostro obiettivo primario)
     if '--- STRUCTURED_RESULTS ---' in output:
-        # Isola solo il blocco di dati che ci interessa
         structured_data = output.split('--- STRUCTURED_RESULTS ---')[1]
-
-        # Cerca ogni etichetta che abbiamo definito nel C
+        
         sa_time_match = re.search(r"SA_TIME:([\d.]+)", structured_data)
         if sa_time_match: result['sa_time'] = float(sa_time_match.group(1))
 
@@ -48,19 +43,24 @@ def parse_output(output):
         len_match = re.search(r"ACTUAL_STRING_LENGTH:(\d+)", structured_data)
         if len_match: result['suffix_array_length'] = int(len_match.group(1))
     
-    # Se il total_time non è stato trovato nel blocco strutturato, prova a prenderlo dall'output leggibile
     if result['total_time'] == 0.0:
         total_time_fallback = re.search(r"Total execution time: ([\d.]+)", output)
         if total_time_fallback:
             result['total_time'] = float(total_time_fallback.group(1))
+            
+    if result['sa_time'] == 0.0:
+        sa_time_fallback = re.search(r"Suffix array construction time \(MPI\): ([\d.]+)", output)
+        if sa_time_fallback:
+            result['sa_time'] = float(sa_time_fallback.group(1))
 
     return result
 
 def run_mpi_benchmark(input_file, num_processes):
     """Esegue benchmark MPI"""
+    # Flag per Kaggle: --allow-run-as-root
+    # Flag per performance: --oversubscribe (permette più processi che core)
     cmd = ["mpirun", "--allow-run-as-root", "--oversubscribe", "-np", str(num_processes), "./bin/main_mpi", input_file]
     
-    start_time = time.time()
     try:
         result = subprocess.run(
             cmd,
@@ -68,57 +68,27 @@ def run_mpi_benchmark(input_file, num_processes):
             text=True,
             timeout=3600  # 1 ora timeout
         )
-        execution_time = time.time() - start_time
         
-        # Estrai informazioni dettagliate dall'output
         parsed_info = parse_output(result.stdout)
         
         return {
             'success': result.returncode == 0,
-            'time': execution_time,
+            'time': parsed_info['total_time'],
             'output': result.stdout,
             'error': result.stderr,
             'lrs_length': parsed_info['lrs_length'],
             'lrs_string': parsed_info['lrs_string'],
             'suffix_array_length': parsed_info['suffix_array_length'],
-            'execution_details': parsed_info['execution_details'],
             'total_time': parsed_info['total_time'],
             'sa_time': parsed_info['sa_time'],
             'lcp_time': parsed_info['lcp_time'],
-            'mpi_processes': parsed_info['mpi_processes'],
-            'parallel_efficiency': parsed_info['parallel_efficiency']
+            'mpi_processes': parsed_info['mpi_processes']
         }
         
     except subprocess.TimeoutExpired:
-        return {
-            'success': False,
-            'time': 3600,
-            'error': 'TIMEOUT',
-            'lrs_length': 0,
-            'lrs_string': 'TIMEOUT',
-            'suffix_array_length': 0,
-            'execution_details': 'TIMEOUT',
-            'total_time': 0.0,
-            'sa_time': 0.0,
-            'lcp_time': 0.0,
-            'mpi_processes': num_processes,
-            'parallel_efficiency': 0.0
-        }
+        return { 'success': False, 'time': 3600, 'error': 'TIMEOUT', 'lrs_length': 0, 'lrs_string': 'TIMEOUT', 'sa_time': 0.0, 'lcp_time': 0.0, 'total_time': 0.0, 'suffix_array_length': 0, 'mpi_processes': num_processes }
     except Exception as e:
-        return {
-            'success': False,
-            'time': 0,
-            'error': str(e),
-            'lrs_length': 0,
-            'lrs_string': 'ERROR',
-            'suffix_array_length': 0,
-            'execution_details': 'ERROR',
-            'total_time': 0.0,
-            'sa_time': 0.0,
-            'lcp_time': 0.0,
-            'mpi_processes': num_processes,
-            'parallel_efficiency': 0.0
-        }
+        return { 'success': False, 'time': 0, 'error': str(e), 'lrs_length': 0, 'lrs_string': 'ERROR', 'sa_time': 0.0, 'lcp_time': 0.0, 'total_time': 0.0, 'suffix_array_length': 0, 'mpi_processes': num_processes }
 
 def format_time(seconds):
     """Formatta il tempo in modo leggibile"""
@@ -127,8 +97,7 @@ def format_time(seconds):
     elif seconds < 60:
         return f"{seconds:.2f}s"
     else:
-        minutes = seconds / 60
-        return f"{minutes:.1f}m"
+        return f"{seconds / 60:.1f}m"
 
 def main():
     print("BENCHMARK MPI - Suffix Array")
@@ -136,7 +105,6 @@ def main():
     print(f"Avviato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
-    # File di test
     mpi_files = [
         "test_data/banana.txt",
         "test_data/mississippi.txt",
@@ -158,13 +126,13 @@ def main():
     
     for test_file in mpi_files:
         if not os.path.exists(test_file):
-            print(f"{os.path.basename(test_file):25} - NON TROVATO")
+            print(f"{os.path.basename(test_file):<25} - NON TROVATO")
             continue
             
         file_size = os.path.getsize(test_file)
         file_size_mb = file_size / (1024 * 1024)
         
-        print(f"{os.path.basename(test_file):25} ({file_size_mb:6.2f} MB)")
+        print(f"{os.path.basename(test_file):<25} ({file_size_mb:6.2f} MB)")
         
         for num_proc in process_configs:
             print(f"  MPI-{num_proc:2} processi...", end=" ", flush=True)
@@ -194,24 +162,31 @@ def main():
         
         # Carica i tempi della versione sequenziale per il confronto
         seq_times = {}
+        seq_csv_path = "results/csv/sequential_results.csv" # --- PATH CORRETTO ---
         try:
-            df_seq = pd.read_csv("results/csv/sequential_results.csv")
+            df_seq = pd.read_csv(seq_csv_path)
+            # Confronta SA_TIME con SA_TIME
             seq_times = pd.Series(df_seq.sa_time.values, index=df_seq.file).to_dict()
         except FileNotFoundError:
-            print("\nAttenzione: file dei risultati sequenziali non trovato. Speedup non calcolato.")
+            print(f"\nAttenzione: file '{seq_csv_path}' non trovato. Speedup non calcolato.")
         
-        df['speedup'] = df.apply(
-            lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
-            axis=1
-        )
-        df['efficiency'] = df.apply(
-            lambda row: row['speedup'] / row['processes'] if row['processes'] > 0 else 0,
-            axis=1
-        )
+        if seq_times: # Solo se abbiamo caricato i dati sequenziali
+            df['speedup'] = df.apply(
+                lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
+                axis=1
+            )
+            df['efficiency'] = df.apply(
+                lambda row: row['speedup'] / row['processes'] if row['processes'] > 0 else 0,
+                axis=1
+            )
+        else:
+            df['speedup'] = 0.0
+            df['efficiency'] = 0.0
 
         # Salva i risultati
-        os.makedirs("results/csv", exist_ok=True)
-        output_file = "results/csv/mpi_results.csv"
+        output_dir = "results/csv" 
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, "mpi_results.csv")
         df.to_csv(output_file, index=False)
         
         print("\n" + "=" * 60)
@@ -225,7 +200,11 @@ def main():
         print("-" * 65)
         for _, row in df.iterrows():
             efficiency_str = f"{row['efficiency'] * 100:.1f}%"
-            print(f"{row['file']:<25} {row['processes']:>5} {format_time(row['sa_time']):>10} {row['speedup']:>9.2f}x {efficiency_str:>12}")
+            speedup_str = f"{row['speedup']:.2f}x"
+            if not seq_times: # Se non abbiamo dati seq, non stampare speedup
+                 speedup_str = "N/A"
+                 efficiency_str = "N/A"
+            print(f"{row['file']:<25} {row['processes']:>5} {format_time(row['sa_time']):>10} {speedup_str:>10} {efficiency_str:>12}")
         print("-" * 65)
 
 if __name__ == "__main__":
