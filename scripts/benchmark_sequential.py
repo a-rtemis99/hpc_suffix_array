@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Benchmark per la versione sequenziale dell'algoritmo Suffix Array
 """
@@ -164,7 +163,7 @@ def main():
                 'size_mb': file_size_mb,
                 'backend': 'sequential',
                 'processes': 1,
-                'time_seconds': result['total_time'], # Salviamo il totale per coerenza
+                'time_seconds': result['total_time'],
                 'sa_time': result['sa_time'],
                 'lcp_time': result['lcp_time']
             })

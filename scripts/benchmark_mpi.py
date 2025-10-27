@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Benchmark per la versione MPI dell'algoritmo Suffix Array
 """
@@ -57,8 +56,6 @@ def parse_output(output):
 
 def run_mpi_benchmark(input_file, num_processes):
     """Esegue benchmark MPI"""
-    # Flag per Kaggle: --allow-run-as-root
-    # Flag per performance: --oversubscribe (permette più processi che core)
     cmd = ["mpirun", "--allow-run-as-root", "--oversubscribe", "-np", str(num_processes), "./bin/main_mpi", input_file]
     
     try:
@@ -66,7 +63,7 @@ def run_mpi_benchmark(input_file, num_processes):
             cmd,
             capture_output=True,
             text=True,
-            timeout=3600  # 1 ora timeout
+            timeout=7200  # 2 ore timeout
         )
         
         parsed_info = parse_output(result.stdout)
@@ -162,7 +159,7 @@ def main():
         
         # Carica i tempi della versione sequenziale per il confronto
         seq_times = {}
-        seq_csv_path = "results/csv/sequential_results.csv" # --- PATH CORRETTO ---
+        seq_csv_path = "results/csv/sequential_results.csv" 
         try:
             df_seq = pd.read_csv(seq_csv_path)
             # Confronta SA_TIME con SA_TIME

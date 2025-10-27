@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Benchmark per la versione CUDA dell'algoritmo Suffix Array
 """
@@ -10,7 +9,6 @@ import sys
 from datetime import datetime
 import re
 
-# Usa la stessa funzione parse_output degli altri script
 def parse_output(output):
     """Estrae informazioni dettagliate dall'output del programma CUDA."""
     result = {
@@ -135,7 +133,7 @@ def main():
                 'size_bytes': file_size,
                 'size_mb': file_size_mb,
                 'backend': 'cuda',
-                'processes': 1, # CUDA usa 1 processo OS
+                'processes': 1, 
                 'time_seconds': result['total_time'],
                 'sa_time': result['sa_time'],
                 'lcp_time': result['lcp_time']
@@ -148,7 +146,7 @@ def main():
 
         # Calcola speedup vs sequenziale
         seq_times = {}
-        seq_csv_path = "results/csv/sequential_results.csv" # --- PATH CORRETTO ---
+        seq_csv_path = "results/csv/sequential_results.csv"
         try:
             df_seq = pd.read_csv(seq_csv_path)
             seq_times = pd.Series(df_seq.sa_time.values, index=df_seq.file).to_dict()
