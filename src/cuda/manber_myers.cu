@@ -3,7 +3,8 @@
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/copy.h>
-#include <vector>
+#include <vector>       // <--- AGGIUNTO (per std::vector)
+#include <algorithm>    // <--- AGGIUNTO (per std::sort)
 #include <cassert>
 #include <iostream>
 
@@ -33,45 +34,9 @@ struct SuffixComparator {
     }
 };
 
-// ====================================================================
-// NUOVO KERNEL 1: Calcola i Rank (dopo il sort)
-// Scrive il rank corretto nell'array d_rank_array
-// basandosi sulla posizione (index) del suffisso.
-// ====================================================================
-__global__
-void kernel_calculate_ranks(const Suffix* d_suffixes, int* d_rank_array, int n) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= n) return;
-
-    int current_rank = 0;
-
-    if (tid > 0) {
-        // Confronta con il suffisso precedente nell'array ordinato
-        if (d_suffixes[tid].rank[0] != d_suffixes[tid - 1].rank[0] ||
-            d_suffixes[tid].rank[1] != d_suffixes[tid - 1].rank[1]) {
-            // Se sono diversi, questo suffisso ha un nuovo rank.
-            // *MA* non sappiamo quale sia il rank assoluto.
-            // Questo approccio è ingenuo e ha race condition se più thread
-            // calcolano lo stesso rank.
-            
-            // Un approccio corretto è molto più complesso (es. parallel prefix scan).
-            
-            // PER QUESTO PROGETTO, manteniamo il calcolo dei rank
-            // sull'host (CPU), ma ottimizziamo l'aggiornamento.
-            
-            // *** NOTA: Il calcolo parallelo dei rank è complesso. ***
-            // *** Modifichiamo la strategia: i rank li calcola ancora la CPU, ***
-            // *** ma i trasferimenti li facciamo UNA SOLA VOLTA. ***
-            
-            // *** Questa implementazione è SBAGLIATA (race condition) ***
-            // *** La strategia corretta (v2) è sotto ***
-        }
-    }
-    //... (approccio ingenuo abbandonato) ...
-}
 
 // ====================================================================
-// NUOVO KERNEL 2: Aggiorna i Rank (prima del sort)
+// NUOVO KERNEL: Aggiorna i Rank (prima del sort)
 // Aggiorna rank[0] e rank[1] per ogni suffisso usando
 // l'array d_rank_array calcolato nel passo precedente.
 // ====================================================================
@@ -80,9 +45,11 @@ void kernel_update_suffixes(Suffix* d_suffixes, const int* d_rank_array, int k_h
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n) return;
 
+    // NOTA: Leggiamo da d_suffixes[tid].index per trovare il *nostro* indice originale
     int index = d_suffixes[tid].index;
     int next_index = index + k_half;
 
+    // Scriviamo nei *nostri* rank (d_suffixes[tid].rank)
     d_suffixes[tid].rank[0] = d_rank_array[index];
     d_suffixes[tid].rank[1] = (next_index < n) ? d_rank_array[next_index] : -1;
 }
@@ -101,9 +68,6 @@ void kernel_update_suffixes(Suffix* d_suffixes, const int* d_rank_array, int k_h
 //    e. Dati Host -> Device (SOLO i rank) (Overhead)
 // 3. Dati Device -> Host (UNA VOLTA)
 //
-// Questo è un compromesso. Elimina la copia dell'array SUFFIX (grande),
-// ma copia ancora l'array RANK (piccolo) ad ogni ciclo.
-// È MOLTO meglio di prima.
 // ====================================================================
 
 extern "C" // Esporta questa funzione con linkage C per main_cuda.cu
@@ -126,24 +90,23 @@ void build_suffix_array_cuda(SuffixArray* sa_host) {
         h_suffixes[i].index = i;
         h_suffixes[i].rank[0] = (unsigned char)sa_host->str[i];
         h_suffixes[i].rank[1] = (i + 1 < n) ? (unsigned char)sa_host->str[i + 1] : -1;
-        
-        // Inizializza anche h_rank_array con i rank del primo carattere
-        h_rank_array[i] = (unsigned char)sa_host->str[i];
     }
+
     // Ordina la prima versione per calcolare i rank iniziali (k=2)
+    // *** QUI C'ERA L'ERRORE ***
     std::sort(h_suffixes.begin(), h_suffixes.end(), SuffixComparator());
     
     // Calcolo Rank (k=2) su Host
     int current_rank = 0;
-    std::vector<Suffix> h_suffixes_temp_for_rank(h_suffixes); // Copia per il calcolo rank
+    // NON serve una copia, basta sovrascrivere h_rank_array
     
-    h_rank_array[h_suffixes_temp_for_rank[0].index] = current_rank;
+    h_rank_array[h_suffixes[0].index] = current_rank;
     for (int i = 1; i < n; i++) {
-        if (h_suffixes_temp_for_rank[i].rank[0] != h_suffixes_temp_for_rank[i - 1].rank[0] ||
-            h_suffixes_temp_for_rank[i].rank[1] != h_suffixes_temp_for_rank[i - 1].rank[1]) {
+        if (h_suffixes[i].rank[0] != h_suffixes[i - 1].rank[0] ||
+            h_suffixes[i].rank[1] != h_suffixes[i - 1].rank[1]) {
             current_rank++;
         }
-        h_rank_array[h_suffixes_temp_for_rank[i].index] = current_rank;
+        h_rank_array[h_suffixes[i].index] = current_rank;
     }
 
 
@@ -151,13 +114,13 @@ void build_suffix_array_cuda(SuffixArray* sa_host) {
     thrust::device_vector<Suffix> d_suffixes(n);
     thrust::device_vector<int> d_rank_array(n);
 
-    // Copia i dati Suffix (inizializzati) su GPU (UNA SOLA VOLTA)
+    // Copia i dati Suffix (già ordinati per k=2) su GPU (UNA SOLA VOLTA)
     gpuErrchk(cudaMemcpy(thrust::raw_pointer_cast(d_suffixes.data()),
                          h_suffixes.data(),
                          n * sizeof(Suffix),
                          cudaMemcpyHostToDevice));
 
-    // Copia i dati Rank (inizializzati) su GPU (UNA SOLA VOLTA)
+    // Copia i dati Rank (calcolati per k=2) su GPU (UNA SOLA VOLTA)
     gpuErrchk(cudaMemcpy(thrust::raw_pointer_cast(d_rank_array.data()),
                          h_rank_array,
                          n * sizeof(int),
