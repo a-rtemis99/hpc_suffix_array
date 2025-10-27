@@ -1,5 +1,3 @@
-// src/sequential/main_sequential.c
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -107,7 +105,7 @@ int main(int argc, char* argv[]) {
         if (input_is_file) free(input_str); // Libera solo se allocato da read_file
         return 1;
     }
-    // NB: Da qui in poi, `sa->str` contiene la copia della stringa.
+    // NB: Da qui in poi, sa->str contiene la copia della stringa.
     // input_str (se letto da file) può essere liberato dopo create_suffix_array.
     if (input_is_file) {
         free(input_str); // Libera la memoria letta da file, ora abbiamo la copia in sa->str
