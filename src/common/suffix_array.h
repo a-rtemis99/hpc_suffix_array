@@ -1,14 +1,12 @@
-// src/common/suffix_array.h
 #ifndef SUFFIX_ARRAY_H
 #define SUFFIX_ARRAY_H
 
-#include <stdio.h> // Per size_t (anche se non strettamente necessario qui)
+#include <stdio.h>
 
-// --- Gestione linkage C/C++ ---
+// Gestione linkage C/C++
 #ifdef __cplusplus
 extern "C" {
 #endif
-// --- Fine Gestione linkage C/C++ ---
 
 // Struttura usata internamente per l'ordinamento
 typedef struct {
@@ -38,14 +36,12 @@ int is_valid_suffix_array(SuffixArray* sa);
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size);
 
 // Funzione CUDA (definita in manber_myers.cu)
-// Dichiarata qui in modo che sia visibile a main_cuda.cu
 void build_suffix_array_cuda(SuffixArray* sa_host);
 
-// --- Chiusura extern "C" ---
+// Chiusura extern "C" 
 #ifdef __cplusplus
 } // extern "C"
 #endif
-// --- Fine Chiusura extern "C" ---
 
 
-#endif // SUFFIX_ARRAY_H
+#endif 

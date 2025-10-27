@@ -5,7 +5,7 @@ NVCC = nvcc
 CFLAGS = -Wall -Wextra -O3 -std=c99
 # Flags specifici per NVCC (usa ottimizzazione -O3, standard C++11, architettura P100)
 NVCCFLAGS = -O3 -std=c++11 -arch=sm_60
-LDFLAGS = -lm # Aggiunto -lm per eventuali funzioni matematiche
+LDFLAGS = -lm 
 
 # === DIRECTORIES ===
 SRC_DIR = src
@@ -18,7 +18,7 @@ BENCH_DIR = $(SRC_DIR)/benchmark
 
 # === SOURCE AND OBJECT FILES ===
 # Common
-COMMON_SRC = $(wildcard $(COMMON_DIR)/*.c) # Usa wildcard per trovare tutti i .c
+COMMON_SRC = $(wildcard $(COMMON_DIR)/*.c) 
 COMMON_OBJ = $(patsubst $(COMMON_DIR)/%.c,$(COMMON_DIR)/%.o,$(COMMON_SRC))
 
 # Sequential
@@ -92,7 +92,6 @@ $(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.
 	$(MPICC) $(CFLAGS) -c -o $@ $<
 
 # Regola specifica e CORRETTA per CUDA .cu -> .cu.o (usa NVCC)
-# Assicurati che suffix_array.h e utils.h siano C++ compatibili o usa extern "C"
 $(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	@echo "Compiling CUDA file: $<"
 	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
