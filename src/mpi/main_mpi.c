@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
         printf("File read successfully. String length: %ld\n", n);
     }
 
-    // Trasmissione (Broadcast) dei dati a tutti i processi
+    // Trasmissione (broadcast) dei dati a tutti i processi
     start_time = MPI_Wtime();
 
     // 1. Trasmette la lunghezza della stringa
@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
         printf("LCP construction + LRS search time: %.6f seconds\n", lcp_search_time);
         printf("Total execution time: %.6f seconds\n", total_execution_time);
 
-        // --- OUTPUT STRUTTURATO PER LO SCRIPT PYTHON (benchmark)
+        // OUTPUT STRUTTURATO PER LO SCRIPT PYTHON (benchmark)
         printf("\n--- STRUCTURED_RESULTS ---\n");
         printf("ACTUAL_STRING_LENGTH:%ld\n", n);
         printf("MPI_PROCESSES:%d\n", size);
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
         free(lrs);
     }
 
-    // ---- Cleanup ----
+    // Cleanup
     destroy_suffix_array(sa);
     if (rank != 0) {
       free(input_str);

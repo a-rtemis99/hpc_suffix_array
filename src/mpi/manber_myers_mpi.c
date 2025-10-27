@@ -44,7 +44,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int blocklengths[2] = {1, 2};
     MPI_Aint displacements[2];
     MPI_Datatype types[2] = {MPI_INT, MPI_INT};
-    Suffix s_temp = {0, {0, 0}}; // Inizializzata per warning
+    Suffix s_temp = {0, {0, 0}};
     MPI_Get_address(&s_temp.index, &displacements[0]);
     MPI_Get_address(&s_temp.rank[0], &displacements[1]);
     displacements[1] = displacements[1] - displacements[0]; displacements[0] = 0;
@@ -59,8 +59,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     Suffix* local_suffixes = (Suffix*)malloc(local_n * sizeof(Suffix));
     assert(local_suffixes != NULL);
 
-    // *** GESTIONE MEMORIA SEMPLICE E ROBUSTA ***
-    // rank_array è allocato da TUTTI all'inizio
+    // rank_array è allocato da tutti all'inizio
     int* rank_array = (int*)malloc(n * sizeof(int));
     assert(rank_array != NULL);
 
@@ -145,15 +144,14 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         // Tutti ricevono rank_array nel loro buffer già allocato
         MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
 
-        // Aggiornamento Locale
+        // Aggiornamento locale
         for (int i = 0; i < local_n; i++) {
             int global_idx = local_suffixes[i].index;
             int next_index = global_idx + k / 2;
             local_suffixes[i].rank[0] = rank_array[global_idx];
             local_suffixes[i].rank[1] = (next_index < n) ? rank_array[next_index] : -1;
         }
-        // *** NESSUN free(rank_array) DENTRO IL CICLO ***
-    } // Fine del ciclo for
+    } 
 
     // Finalizzazione
     if (rank == 0) {
@@ -176,6 +174,6 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         free(displs_structs);
     }
     free(local_suffixes);
-    // Libera rank_array su TUTTI i processi, una sola volta
+    // Libera rank_array su tutti i processi, una sola volta
     free(rank_array);
 }
