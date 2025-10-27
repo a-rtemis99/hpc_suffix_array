@@ -1,23 +1,22 @@
-#include "../common/suffix_array.h" // Per la definizione di SuffixArray e Suffix
+#include "../common/suffix_array.h"
 #include <cuda_runtime.h>
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/copy.h>
 #include <vector>
 #include <cassert>
-#include <iostream> // Per eventuali messaggi di debug
+#include <iostream> 
 
 // Prototipo della funzione sequenziale (per la strategia ibrida)
-// Assicurati che sia dichiarata extern "C" se manber_myers.c è C puro
 extern "C" {
     void build_suffix_array(SuffixArray* sa);
 }
 
 
-// --- Functor di confronto per Thrust ---
+// Functor di confronto per Thrust:
 // Questo oggetto dice a Thrust come confrontare due strutture Suffix
 // basandosi sulla coppia di rank (rank[0], rank[1]).
-// Deve avere `__host__ __device__` per poter essere usato sia da CPU che GPU.
+// Deve avere __host__ __device__ per poter essere usato sia da CPU che GPU.
 struct SuffixComparator {
     __host__ __device__
     bool operator()(const Suffix& a, const Suffix& b) const {
@@ -44,14 +43,14 @@ extern "C" // Esporta questa funzione con linkage C per main_cuda.cu
 void build_suffix_array_cuda(SuffixArray* sa_host) {
     int n = sa_host->n;
 
-    // --- STRATEGIA IBRIDA ---
+    // STRATEGIA IBRIDA
     // Per input piccoli (< 5MB), esegui sequenziale sulla CPU
     if (n < 5000000) {
         build_suffix_array(sa_host); // Usa la versione sequenziale C (qsort)
-        return; // Abbiamo finito
+        return;
     }
 
-    // --- PREPARAZIONE DATI HOST ---
+    // PREPARAZIONE DATI HOST
     std::vector<Suffix> h_suffixes(n);
     int* h_rank_array = (int*)malloc(n * sizeof(int));
     assert(h_rank_array != NULL);
@@ -63,10 +62,10 @@ void build_suffix_array_cuda(SuffixArray* sa_host) {
         h_suffixes[i].rank[1] = (i + 1 < n) ? (unsigned char)sa_host->str[i + 1] : -1;
     }
 
-    // --- PREPARAZIONE DATI DEVICE ---
+    // PREPARAZIONE DATI DEVICE
     thrust::device_vector<Suffix> d_suffixes(n);
 
-    // --- CICLO DI RADDOPPIO (Logica principale su Host, Sort su Device) ---
+    // CICLO DI RADDOPPIO (Logica principale su Host, Sort su Device)
     int k;
     for (k = 4; k < 2 * n; k *= 2) { // k parte da 4
 
@@ -77,7 +76,7 @@ void build_suffix_array_cuda(SuffixArray* sa_host) {
                              cudaMemcpyHostToDevice));
 
         // 2. Ordinamento su Device usando Thrust
-        // Usiamo stable_sort per mantenere l'ordine relativo in caso di rank uguali (importante)
+        // Usiamo stable_sort per mantenere l'ordine relativo in caso di rank uguali
         try {
             thrust::stable_sort(d_suffixes.begin(), d_suffixes.end(), SuffixComparator());
         } catch (const thrust::system_error &e) {
@@ -117,9 +116,9 @@ void build_suffix_array_cuda(SuffixArray* sa_host) {
             h_suffixes[i].rank[0] = h_rank_array[h_suffixes[i].index];
             h_suffixes[i].rank[1] = (next_index < n) ? h_rank_array[next_index] : -1;
         }
-    } // Fine ciclo for
+    } 
 
-    // --- FINALIZZAZIONE ---
+    // FINALIZZAZIONE
     // Copia gli indici finali (già ordinati su h_suffixes) nell'output sa_host->sa
     for (int i = 0; i < n; i++) {
         sa_host->sa[i] = h_suffixes[i].index;

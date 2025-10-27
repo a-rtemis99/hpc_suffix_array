@@ -1,15 +1,13 @@
-// src/cuda/main_cuda.cu
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h> // Per gettimeofday
-#include <cuda_runtime.h> // Necessario per timing con eventi CUDA
-#include <unistd.h> // Per gethostname (opzionale)
-#include "../common/suffix_array.h" // Ora gestisce extern "C" automaticamente
-#include "../common/utils.h" // Per read_file etc.
+#include <sys/time.h> 
+#include <cuda_runtime.h> 
+#include <unistd.h> 
+#include "../common/suffix_array.h" 
+#include "../common/utils.h"
 
-// --- Definizione Macro Error Checking CUDA ---
+// Definizione Macro Error Checking CUDA 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
    if (code != cudaSuccess) {
       fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
@@ -18,11 +16,9 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 // Macro da usare nel codice
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-// --- Fine Definizione Macro ---
 
 
 // Prototipo della funzione CUDA (definita in manber_myers.cu)
-// Non serve più extern "C" qui, è gestito dall'header
 void build_suffix_array_cuda(SuffixArray* sa_host);
 
 // Prototipi funzioni C (linkage gestito dall'header)
@@ -41,7 +37,7 @@ double get_time() {
 void print_structured_results_for_script(long string_length, double sa_time, double lcp_time, double total_time) {
     printf("\n--- STRUCTURED_RESULTS ---\n");
     printf("ACTUAL_STRING_LENGTH:%ld\n", string_length);
-    printf("MPI_PROCESSES:1\n"); // CUDA gira come un singolo processo OS
+    printf("MPI_PROCESSES:1\n");
     printf("SA_TIME:%.6f\n", sa_time);
     printf("LCP_TIME:%.6f\n", lcp_time);
     printf("TOTAL_TIME:%.6f\n", total_time);
@@ -78,7 +74,7 @@ int main(int argc, char* argv[]) {
         printf("Input string: %s (length %ld)\n", input_str_original, n);
     }
 
-    // --- TIMING CON EVENTI CUDA ---
+    // TIMING CON EVENTI CUDA
     cudaEvent_t start_event, stop_event, mid_event;
     gpuErrchk(cudaEventCreate(&start_event));
     gpuErrchk(cudaEventCreate(&mid_event));
@@ -96,7 +92,7 @@ int main(int argc, char* argv[]) {
         input_str_original = NULL;
     }
 
-    // --- ESECUZIONE CUDA ---
+    // ESECUZIONE CUDA
     printf("Starting CUDA Suffix Array construction...\n");
     gpuErrchk(cudaEventRecord(start_event, 0)); // Marca l'inizio
 
@@ -104,7 +100,7 @@ int main(int argc, char* argv[]) {
 
     gpuErrchk(cudaEventRecord(mid_event, 0)); // Marca la fine della costruzione SA
 
-    // --- FASI SEQUENZIALI POST-CUDA (su Host) ---
+    // FASI SEQUENZIALI POST-CUDA (su Host)
     build_lcp_array(sa);
     char* lrs = find_longest_repeated_substring(sa);
 
@@ -120,7 +116,7 @@ int main(int argc, char* argv[]) {
     double lcp_search_time_s = (total_time_ms > sa_time_ms) ? (total_time_ms - sa_time_ms) / 1000.0 : 0.0; // Evita tempi negativi
     double total_execution_time_s = total_time_ms / 1000.0;
 
-    // Validazione e Stampa Risultati
+    // Validazione e stampa risultati
     int valid = is_valid_suffix_array(sa);
     printf("\n=== RESULTS ===\n");
     printf("Valid suffix array: %s\n", valid ? "YES" : "NO");
