@@ -1,13 +1,13 @@
-# === COMPILER AND FLAGS ===
+# COMPILER AND FLAGS 
 CC = gcc
 MPICC = mpicc
 NVCC = nvcc
 CFLAGS = -Wall -Wextra -O3 -std=c99
-# Flags specifici per NVCC (usa ottimizzazione -O3, standard C++11, architettura P100)
+# Flags specifici per NVCC (ottimizzazione -O3, standard C++11, architettura P100)
 NVCCFLAGS = -O3 -std=c++11 -arch=sm_60
 LDFLAGS = -lm 
 
-# === DIRECTORIES ===
+# DIRECTORIES 
 SRC_DIR = src
 BIN_DIR = bin
 COMMON_DIR = $(SRC_DIR)/common
@@ -16,7 +16,7 @@ MPI_DIR = $(SRC_DIR)/mpi
 CUDA_DIR = $(SRC_DIR)/cuda
 BENCH_DIR = $(SRC_DIR)/benchmark
 
-# === SOURCE AND OBJECT FILES ===
+# SOURCE AND OBJECT FILES 
 # Common
 COMMON_SRC = $(wildcard $(COMMON_DIR)/*.c) 
 COMMON_OBJ = $(patsubst $(COMMON_DIR)/%.c,$(COMMON_DIR)/%.o,$(COMMON_SRC))
@@ -47,7 +47,7 @@ BENCH_SRC = $(wildcard $(BENCH_DIR)/*.c)
 BENCH_OBJS = $(patsubst $(BENCH_DIR)/%.c,$(BENCH_DIR)/%.o,$(BENCH_SRC))
 BENCH_TARGET_OBJS = $(COMMON_OBJ) $(SEQ_DIR)/manber_myers.o $(BENCH_OBJS)
 
-# === TARGETS ===
+# TARGETS 
 TARGET_SEQ = $(BIN_DIR)/main_sequential
 TARGET_MPI = $(BIN_DIR)/main_mpi
 TARGET_CUDA = $(BIN_DIR)/main_cuda
@@ -55,7 +55,7 @@ TARGET_BENCH = $(BIN_DIR)/suffix_array_benchmark
 
 .PHONY: all sequential mpi cuda benchmark charts clean distclean run-benchmark run-benchmark-mpi run-benchmark-cuda run-mpi test test-mpi test-correctness env-setup help generate-data
 
-# === PRIMARY TARGETS ===
+# PRIMARY TARGETS 
 all: sequential mpi cuda benchmark
 
 sequential: $(TARGET_SEQ)
@@ -66,7 +66,7 @@ cuda: $(TARGET_CUDA)
 
 benchmark: $(TARGET_BENCH)
 
-# === LINKING RULES ===
+# LINKING RULES
 $(TARGET_SEQ): $(SEQ_TARGET_OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -82,7 +82,7 @@ $(TARGET_BENCH): $(BENCH_TARGET_OBJS) | $(BIN_DIR)
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# === COMPILATION RULES (PATTERN RULES) ===
+# COMPILATION RULES (PATTERN RULES)
 # Regola generica per .c -> .o (usa CC)
 $(COMMON_DIR)/%.o $(SEQ_DIR)/%.o $(BENCH_DIR)/%.o: %.c $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -91,37 +91,37 @@ $(COMMON_DIR)/%.o $(SEQ_DIR)/%.o $(BENCH_DIR)/%.o: %.c $(COMMON_DIR)/suffix_arra
 $(MPI_DIR)/%.o: $(MPI_DIR)/%.c $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	$(MPICC) $(CFLAGS) -c -o $@ $<
 
-# Regola specifica e CORRETTA per CUDA .cu -> .cu.o (usa NVCC)
+# Regola specifica per CUDA .cu -> .cu.o (usa NVCC)
 $(CUDA_DIR)/%.cu.o: $(CUDA_DIR)/%.cu $(COMMON_DIR)/suffix_array.h $(COMMON_DIR)/utils.h | $(BIN_DIR)
 	@echo "Compiling CUDA file: $<"
 	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
 
-# === UTILITY & TESTING TARGETS ===
+# UTILITY & TESTING TARGETS 
 env-setup:
-	@echo "🐍 Setting up Python virtual environment..."
+	@echo "Setting up Python virtual environment..."
 	sudo apt-get update && sudo apt-get install -y python3-full python3-venv
 	python3 -m venv hpc_env
 	./hpc_env/bin/pip install pandas matplotlib seaborn numpy
-	@echo "✅ Python environment configured in ./hpc_env/"
+	@echo "Python environment configured in ./hpc_env/"
 
 generate-data:
-	@echo "💾 Generating large test datasets..."
+	@echo "Generating large test datasets..."
 	@python3 scripts/generate_large_datasets.py
 
-charts: env-check # Aggiunta dipendenza per controllo ambiente python
-	@echo "📊 Generating charts..."
+charts: env-check 
+	@echo "Generating charts..."
 	./hpc_env/bin/python3 scripts/generate_charts.py
 
 run-benchmark-mpi: mpi env-check
-	@echo "🚀 Running MPI benchmark..."
+	@echo "Running MPI benchmark..."
 	./hpc_env/bin/python3 scripts/benchmark_mpi.py
 
 run-benchmark-cuda: cuda env-check
-	@echo "🚀 Running CUDA benchmark..."
+	@echo "Running CUDA benchmark..."
 	./hpc_env/bin/python3 scripts/benchmark_cuda.py
 
 run-mpi: mpi
-	@echo "🚀 Running MPI version on 500MB file with 4 processes..."
+	@echo "Running MPI version on 500MB file with 4 processes..."
 	mpirun --allow-run-as-root --oversubscribe -np 4 ./$(TARGET_MPI) test_data/large/random_500MB.txt
 
 test: sequential
@@ -147,11 +147,11 @@ test-correctness: sequential
 .PHONY: env-check
 env-check:
 	@if [ ! -d "hpc_env" ]; then \
-		echo "❌ Python environment not found. Please run 'make env-setup' first."; \
+		echo "Python environment not found. Please run 'make env-setup' first."; \
 		exit 1; \
 	fi
 
-# === CLEANING TARGETS ===
+# CLEANING TARGETS
 clean:
 	@echo "🧹 Cleaning build files..."
 	rm -f $(COMMON_DIR)/*.o $(SEQ_DIR)/*.o $(MPI_DIR)/*.o $(CUDA_DIR)/*.cu.o $(BENCH_DIR)/*.o
@@ -159,10 +159,10 @@ clean:
 	rm -rf results/csv/*.csv results/charts/*.png
 
 distclean: clean
-	@echo "🔥 Performing deep clean (removes Python venv and bin)..."
+	@echo "Performing deep clean (removes Python venv and bin)..."
 	rm -rf hpc_env $(BIN_DIR)
 
-# === HELP TARGET ===
+# HELP TARGET
 help:
 	@echo "=== HPC SUFFIX ARRAY MAKEFILE TARGETS ==="
 	@echo "--- Build Targets ---"

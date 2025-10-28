@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 
 def parse_output(output):
-    """Estrae informazioni dettagliate dall'output del programma MPI."""
+    # Estrae informazioni dettagliate dall'output del programma MPI
     result = {
         'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0,
         'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0
@@ -167,7 +167,7 @@ def main():
         except FileNotFoundError:
             print(f"\nAttenzione: file '{seq_csv_path}' non trovato. Speedup non calcolato.")
         
-        if seq_times: # Solo se abbiamo caricato i dati sequenziali
+        if seq_times: # Solo se sono disponibili i dati sequenziali
             df['speedup'] = df.apply(
                 lambda row: seq_times.get(row['file'], 0) / row['sa_time'] if row['sa_time'] > 0 else 0,
                 axis=1
@@ -198,7 +198,7 @@ def main():
         for _, row in df.iterrows():
             efficiency_str = f"{row['efficiency'] * 100:.1f}%"
             speedup_str = f"{row['speedup']:.2f}x"
-            if not seq_times: # Se non abbiamo dati seq, non stampare speedup
+            if not seq_times: # Se non si hanno dati seq, non stampa speedup
                  speedup_str = "N/A"
                  efficiency_str = "N/A"
             print(f"{row['file']:<25} {row['processes']:>5} {format_time(row['sa_time']):>10} {speedup_str:>10} {efficiency_str:>12}")

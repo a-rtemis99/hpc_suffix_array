@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 
 def parse_output(output):
-    """Estrae informazioni dettagliate dall'output del programma CUDA."""
+    # Estrae informazioni dettagliate dall'output del programma CUDA
     result = {
         'lrs_length': 0, 'lrs_string': 'N/A', 'sa_time': 0.0, 'lcp_time': 0.0,
         'total_time': 0.0, 'mpi_processes': 0, 'suffix_array_length': 0

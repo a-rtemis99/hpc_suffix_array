@@ -16,7 +16,7 @@ typedef struct {
 
 // Struttura principale esposta all'utente
 typedef struct {
-    char* str;    // Stringa originale (copiata da create_suffix_array)
+    char* str;    // Stringa originale
     int n;        // Lunghezza della stringa
     int* sa;      // Suffix array finale (risultato)
     int* lcp;     // Array LCP (calcolato sequenzialmente alla fine)

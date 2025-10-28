@@ -1,6 +1,5 @@
 """
 Generatore di dataset di grandi dimensioni per testing Suffix Array
-(Versione modificata per generare solo i file richiesti dalla traccia)
 """
 import os
 import random
@@ -13,7 +12,7 @@ import random
 random.seed(42)
 
 def generate_random_string(length):
-    """Genera una stringa casuale di lunghezza specificata"""
+    # Genera una stringa casuale di lunghezza specificata
     char_set = string.ascii_letters + string.digits
     return ''.join(random.choices(char_set, k=length))
 
@@ -98,7 +97,7 @@ def main():
     print("\nSummary of generated .txt files:")
     for root, dirs, files in os.walk("test_data"):
 
-        for file in sorted(files): # Ordina i file per leggibilità
+        for file in sorted(files): 
             if file.endswith('.txt') and not file.endswith('.meta'):
                 filepath = os.path.join(root, file)
                 try:

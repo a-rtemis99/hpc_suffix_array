@@ -19,9 +19,7 @@ int compare_suffixes(const void* a, const void* b) {
     return (s1->rank[0] < s2->rank[0]) ? -1 : 1;
 }
 
-// ====================================================================
-// --- INIZIO IMPLEMENTAZIONE MIN-HEAP PER K-WAY MERGE ---
-// ====================================================================
+// --- IMPLEMENTAZIONE MIN-HEAP PER K-WAY MERGE ---
 
 // Nodo dell'heap: contiene il Suffix e l'indice del chunk da cui proviene
 typedef struct {
@@ -43,7 +41,7 @@ void min_heapify(HeapNode* heap, int size, int i) {
     int right = 2 * i + 2;
 
     // Confronta usando la stessa funzione di qsort, passando l'indirizzo
-    // del Suffix all'interno del nodo dell'heap.
+    // del Suffix all'interno del nodo dell'heap
     if (left < size && compare_suffixes(&heap[left].s, &heap[smallest].s) < 0) {
         smallest = left;
     }
@@ -119,16 +117,12 @@ void merge_k_chunks(Suffix* all_suffixes, int* chunk_sizes, int* chunk_displs, i
     free(chunk_counters);
 }
 
-// ====================================================================
-// --- FINE IMPLEMENTAZIONE MIN-HEAP ---
-// ====================================================================
 
-
-// Funzione principale MPI - Master/Worker (v2)
+// Funzione principale MPI - Master/Worker
 void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     int n = sa->n;
 
-    // STRATEGIA IBRIDA (invariata)
+    // STRATEGIA IBRIDA
     if (n < 5000000) {
         if (rank == 0) {
             build_suffix_array(sa); // Usa la versione sequenziale con qsort
@@ -141,7 +135,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         return;
     }
 
-    // Creazione MPI Datatype per Suffix (invariato)
+    // Creazione MPI Datatype per Suffix
     MPI_Datatype suffix_mpi_type;
     int blocklengths[2] = {1, 2};
     MPI_Aint displacements[2];
@@ -153,18 +147,18 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
     MPI_Type_create_struct(2, blocklengths, displacements, types, &suffix_mpi_type);
     MPI_Type_commit(&suffix_mpi_type);
 
-    // Calcolo distribuzione (invariato)
+    // Calcolo distribuzione
     int base_chunk = n / size;
     int remainder = n % size;
     int local_n = base_chunk + (rank < remainder ? 1 : 0); 
     Suffix* local_suffixes = (Suffix*)malloc(local_n * sizeof(Suffix));
     assert(local_suffixes != NULL);
 
-    // rank_array è allocato da tutti (invariato)
+    // rank_array è allocato da tutti
     int* rank_array = (int*)malloc(n * sizeof(int));
     assert(rank_array != NULL);
 
-    // Distribuzione iniziale (invariato)
+    // Distribuzione iniziale
     if (rank == 0) {
         Suffix* all_suffixes_temp = (Suffix*)malloc(n * sizeof(Suffix));
         assert(all_suffixes_temp != NULL);
@@ -208,7 +202,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
         displs_structs = (int*)malloc(size * sizeof(int)); assert(displs_structs != NULL);
     }
     
-    // Gather per chunk sizes (invariato)
+    // Gather per chunk sizes
     MPI_Gather(&local_n, 1, MPI_INT, recvcounts_structs, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
@@ -222,21 +216,16 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
 
     // Ciclo principale di Manber-Myers
     for (k = 4; k < 2 * n; k *= 2) {
-        // Ordinamento locale (invariato)
+        // Ordinamento locale 
         qsort(local_suffixes, local_n, sizeof(Suffix), compare_suffixes);
 
-        // Raccolta dei chunk localmente ordinati (invariato)
+        // Raccolta dei chunk localmente ordinati 
         MPI_Gatherv(local_suffixes, local_n, suffix_mpi_type,
                       all_suffixes, recvcounts_structs, displs_structs, suffix_mpi_type,
                       0, MPI_COMM_WORLD);
 
         int terminate = 0;
         if (rank == 0) {
-            // *** MODIFICA CHIAVE ***
-            // VECCHIO CODICE (lento):
-            // qsort(all_suffixes, n, sizeof(Suffix), compare_suffixes);
-            
-            // NUOVO CODICE (veloce):
             // Fonde i 'size' chunk ordinati da 'all_suffixes' in 'sorted_suffixes'
             merge_k_chunks(all_suffixes, recvcounts_structs, displs_structs, size, n, sorted_suffixes);
             
@@ -244,7 +233,7 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
             int current_rank = 0;
             rank_array[sorted_suffixes[0].index] = current_rank;
             for (int i = 1; i < n; i++) {
-                // Confronta usando il nostro comparator
+                // Confronta usando il comparator
                 if (compare_suffixes(&sorted_suffixes[i], &sorted_suffixes[i-1]) != 0) {
                     current_rank++;
                 }
@@ -254,14 +243,14 @@ void build_suffix_array_mpi(SuffixArray* sa, int rank, int size) {
             if (current_rank == n - 1) terminate = 1;
         }
 
-        // Broadcast della terminazione (invariato)
+        // Broadcast della terminazione
         MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
         if (terminate) break;
 
-        // Broadcast dei rank (invariato)
+        // Broadcast dei rank
         MPI_Bcast(rank_array, n, MPI_INT, 0, MPI_COMM_WORLD);
 
-        // Aggiornamento locale (invariato)
+        // Aggiornamento locale
         for (int i = 0; i < local_n; i++) {
             int global_idx = local_suffixes[i].index;
             int next_index = global_idx + k / 2;

@@ -1,5 +1,3 @@
-// Basato su: https://gist.github.com/sumanth232/e1600b327922b6947f51
-
 #include "../common/suffix_array.h"
 #include <stdio.h>
 #include <stdlib.h>

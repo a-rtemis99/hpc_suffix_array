@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 
 def parse_output(output):
-    """Estrae informazioni dettagliate dall'output del programma"""
+    # Estrae informazioni dettagliate dall'output del programma
     result = {
         'lrs_length': 0,
         'lrs_string': 'N/A',
@@ -46,7 +46,7 @@ def parse_output(output):
         len_match = re.search(r"ACTUAL_STRING_LENGTH:(\d+)", structured_data)
         if len_match: result['suffix_array_length'] = int(len_match.group(1))
     
-    # Fallback se il blocco strutturato non c'è (dovrebbe esserci)
+    # Fallback se il blocco strutturato non c'è 
     if result['total_time'] == 0.0:
         total_time_fallback = re.search(r"Total execution time: ([\d.]+)", output)
         if total_time_fallback:
